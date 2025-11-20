@@ -16,6 +16,9 @@ Scénarios implémentés :
 5. Crise systémique (combinaison de chocs)
 6. Comparaison avec système traditionnel (sans régulation)
 7. Regulation Only (mécanismes de régulation pure - pour illustration théorique)
+8. Baseline Stable (équilibre stable avec paramètres par défaut)
+9. Crisis High Volatility (stress test avec volatilité élevée)
+10. No Regulation (système sans RAD, η=κ=1 fixes)
 """
 
 import numpy as np
@@ -532,6 +535,410 @@ class ScenarioRunner:
             else:
                 print(f"    ⚠ Le système s'éloigne de l'équilibre")
 
+        print("\n" + "="*70 + "\n")
+
+        return economy
+
+    def run_baseline_stable(self, steps: int = 1200) -> IRISEconomy:
+        """
+        Scénario BASELINE STABLE : Équilibre stable avec paramètres par défaut
+
+        ═══════════════════════════════════════════════════════════════════════════
+        SCÉNARIO BASELINE STABLE - DÉMONSTRATION D'ÉQUILIBRE
+        ═══════════════════════════════════════════════════════════════════════════
+
+        Ce scénario illustre le fonctionnement stable du système IRIS en conditions
+        normales avec tous les modules activés et les paramètres par défaut.
+
+        OBJECTIF :
+        Démontrer la capacité du système à maintenir l'équilibre thermodynamique
+        (θ ≈ 1) sur le long terme sans chocs externes, grâce à la régulation
+        contracyclique automatique du RAD.
+
+        MODULES ACTIFS :
+        - ✅ Démographie (naissances/décès réalistes)
+        - ✅ Entreprises dynamiques (créations/faillites)
+        - ✅ Combustion S+U→V (production)
+        - ✅ Chambre de Relance
+        - ✅ Régulation RAD (κ, η contracycliques)
+        - ✅ Revenu Universel (RU modulé par κ)
+        - ❌ Catastrophes (désactivées pour stabilité)
+
+        PARAMÈTRES NOTABLES :
+        - universal_income_rate = 0.02 (2% de V_on distribué/an)
+        - kappa_smoothing = 0.1 (lissage modéré)
+        - eta_smoothing = 0.15 (lissage modéré)
+        - Durée recommandée : 1200 steps (100 ans)
+
+        CE QU'ON OBSERVE :
+        1. Thermomètre θ oscille doucement autour de 1.0 (±0.1)
+        2. κ et η s'ajustent de manière contracyclique
+        3. Population croît de manière réaliste
+        4. Entreprises naissent et meurent naturellement
+        5. Inégalités (Gini) restent modérées grâce au RU
+
+        Args:
+            steps: Durée de la simulation en mois (défaut: 1200 = 100 ans)
+
+        Returns:
+            Économie IRIS après simulation (état stable)
+        """
+        print("\n" + "="*70)
+        print("SCÉNARIO 8 : BASELINE STABLE - Équilibre à Long Terme")
+        print("="*70)
+        print("\n📌 OBJECTIF : Démontrer la stabilité naturelle du système IRIS")
+        print("   Modules actifs : Tous (sauf catastrophes)")
+        print("   Paramètres : Par défaut (calibrés pour stabilité)\n")
+
+        # Création de l'économie avec paramètres optimaux pour stabilité
+        economy = IRISEconomy(
+            initial_agents=self.n_agents,
+            gold_factor=1.0,
+            universal_income_rate=0.02,  # 2% RU annuel
+            # ═══════════════════════════════════════════════════════════════
+            # CONFIGURATION POUR STABILITÉ MAXIMALE
+            # ═══════════════════════════════════════════════════════════════
+            enable_demographics=True,             # Démographie réaliste
+            enable_catastrophes=False,            # Pas de chocs externes
+            enable_price_discovery=True,          # Prix dynamiques
+            enable_dynamic_business=True,         # Entreprises évolutives
+            enable_business_combustion=True,      # Production active
+            enable_chambre_relance=True,          # Redistribution
+        )
+
+        # Affichage initial
+        print(f"État initial :")
+        print(f"  Population : {len(economy.agents)} agents")
+        print(f"  V_on initial : {economy.get_V_on():.0f}")
+        print(f"  D total initial : {economy.rad.total_D():.0f}")
+        print(f"  Thermomètre θ : {economy.thermometer():.4f}")
+
+        # Simulation longue durée
+        print(f"\nSimulation de {steps} steps ({steps//12} ans)...")
+        economy.simulate(steps=steps, n_transactions=20)
+
+        self.results['baseline_stable'] = economy.history
+
+        # Analyse de la stabilité
+        theta_history = np.array(economy.history['thermometer'])
+        indicator_history = np.array(economy.history['indicator'])
+        kappa_history = np.array(economy.history.get('kappa', [1.0] * len(theta_history)))
+
+        theta_mean = np.mean(theta_history)
+        theta_std = np.std(theta_history)
+        indicator_mean = np.mean(indicator_history)
+        indicator_std = np.std(indicator_history)
+
+        print(f"\n📈 Résultats (baseline stable) :")
+        print(f"  ═══════════════════════════════════════════════════════════")
+        print(f"  STABILITÉ THERMODYNAMIQUE :")
+        print(f"    Thermomètre θ moyen : {theta_mean:.4f} (cible = 1.0)")
+        print(f"    Écart-type θ : {theta_std:.4f}")
+        print(f"    Thermomètre θ final : {economy.thermometer():.4f}")
+        print(f"  ═══════════════════════════════════════════════════════════")
+        print(f"  RÉGULATION CONTRACYCLIQUE :")
+        print(f"    Indicateur I moyen : {indicator_mean:.4f} (cible = 0.0)")
+        print(f"    Écart-type I : {indicator_std:.4f}")
+        print(f"    Kappa κ final : {economy.rad.kappa:.4f}")
+        print(f"    Eta η final : {economy.rad.eta:.4f}")
+        print(f"  ═══════════════════════════════════════════════════════════")
+        print(f"  MÉTRIQUES ÉCONOMIQUES :")
+        print(f"    Population finale : {len(economy.agents)} agents")
+        print(f"    V_on final : {economy.get_V_on():.0f}")
+        print(f"    Coefficient Gini : {economy.gini_coefficient():.4f}")
+        print(f"  ═══════════════════════════════════════════════════════════")
+
+        # Évaluation de la stabilité
+        if abs(theta_mean - 1.0) < 0.1 and theta_std < 0.2:
+            print(f"  ✅ SYSTÈME STABLE : θ converge vers l'équilibre")
+        else:
+            print(f"  ⚠️  SYSTÈME INSTABLE : déviation significative de θ")
+
+        print("\n" + "="*70 + "\n")
+
+        return economy
+
+    def run_crisis_high_volatility(self, steps: int = 600) -> IRISEconomy:
+        """
+        Scénario CRISIS HIGH VOLATILITY : Stress test avec volatilité élevée
+
+        ═══════════════════════════════════════════════════════════════════════════
+        SCÉNARIO CRISIS HIGH VOLATILITY - TEST DE RÉSILIENCE
+        ═══════════════════════════════════════════════════════════════════════════
+
+        Ce scénario teste la résilience du système IRIS face à des conditions
+        extrêmes : catastrophes fréquentes, régulation hyper-réactive, volatilité
+        maximale. Objectif : vérifier que le RAD maintient la stabilité même sous
+        stress intense.
+
+        OBJECTIF :
+        Démontrer la robustesse du système IRIS face à des chocs multiples et
+        une volatilité économique élevée. Évaluer les limites de la régulation
+        contracyclique en conditions extrêmes.
+
+        MODULES ACTIFS :
+        - ✅ Démographie (avec wealth_influence pour amplifier effets)
+        - ✅ Catastrophes (TOUTES, fréquence élevée)
+        - ✅ Entreprises dynamiques (créations/faillites rapides)
+        - ✅ Combustion et Chambre de Relance
+        - ✅ Régulation RAD (paramètres ultra-réactifs)
+
+        PARAMÈTRES MODIFIÉS POUR HAUTE VOLATILITÉ :
+        - Catastrophes : base_frequency = 0.20 (20% probabilité/an vs 5% normal)
+        - RAD : kappa_smoothing = 0.3 (réaction rapide vs 0.1 normal)
+        - RAD : eta_smoothing = 0.4 (réaction rapide vs 0.15 normal)
+        - RAD : kappa_beta = 0.8 (haute sensibilité vs 0.5 normal)
+        - RAD : eta_alpha = 0.8 (haute sensibilité vs 0.5 normal)
+
+        CE QU'ON OBSERVE :
+        1. Thermomètre θ fluctue fortement (±0.3 à ±0.5)
+        2. κ et η réagissent rapidement et fortement
+        3. Catastrophes fréquentes créent des chocs de D
+        4. Population et entreprises volatiles
+        5. Le système SE STABILISE malgré la volatilité (preuve de résilience)
+
+        Args:
+            steps: Durée de la simulation en mois (défaut: 600 = 50 ans)
+
+        Returns:
+            Économie IRIS après simulation (état post-crise)
+        """
+        print("\n" + "="*70)
+        print("SCÉNARIO 9 : CRISIS HIGH VOLATILITY - Stress Test Extrême")
+        print("="*70)
+        print("\n📌 OBJECTIF : Tester les limites de résilience du système IRIS")
+        print("   Conditions : Catastrophes fréquentes, régulation hyper-réactive")
+        print("   Attente : Le RAD maintient la stabilité malgré la volatilité\n")
+
+        # Création de l'économie avec paramètres de haute volatilité
+        economy = IRISEconomy(
+            initial_agents=self.n_agents,
+            gold_factor=1.0,
+            universal_income_rate=0.02,
+            # ═══════════════════════════════════════════════════════════════
+            # CONFIGURATION HAUTE VOLATILITÉ
+            # ═══════════════════════════════════════════════════════════════
+            enable_demographics=True,
+            enable_catastrophes=True,             # CATASTROPHES ACTIVÉES
+            enable_price_discovery=True,
+            enable_dynamic_business=True,
+            enable_business_combustion=True,
+            enable_chambre_relance=True,
+        )
+
+        # Modification des paramètres RAD pour réactivité élevée
+        economy.rad.kappa_smoothing = 0.3        # Réaction rapide (vs 0.1 normal)
+        economy.rad.eta_smoothing = 0.4          # Réaction rapide (vs 0.15 normal)
+        economy.rad.kappa_beta = 0.8             # Haute sensibilité (vs 0.5 normal)
+        economy.rad.eta_alpha = 0.8              # Haute sensibilité (vs 0.5 normal)
+
+        # Configuration catastrophes pour haute fréquence
+        if hasattr(economy, 'catastrophe_manager') and economy.catastrophe_manager:
+            economy.catastrophe_manager.base_frequency = 0.20  # 20% vs 5% normal
+
+        # Affichage initial
+        print(f"État initial :")
+        print(f"  Population : {len(economy.agents)} agents")
+        print(f"  θ initial : {economy.thermometer():.4f}")
+        print(f"\n⚡ PARAMÈTRES DE VOLATILITÉ :")
+        print(f"  Catastrophes : 20% probabilité/an (4× normale)")
+        print(f"  Régulation RAD : réactivité maximale (κ_smooth=0.3, η_smooth=0.4)")
+        print(f"  Sensibilité : β=α=0.8 (1.6× normale)")
+
+        # Simulation sous stress
+        print(f"\nSimulation de {steps} steps ({steps//12} ans) sous stress...")
+        print("⚠️  Attendez-vous à de fortes fluctuations...")
+
+        economy.simulate(steps=steps, n_transactions=20)
+
+        self.results['crisis_high_volatility'] = economy.history
+
+        # Analyse de la résilience
+        theta_history = np.array(economy.history['thermometer'])
+        indicator_history = np.array(economy.history['indicator'])
+
+        theta_mean = np.mean(theta_history)
+        theta_std = np.std(theta_history)
+        theta_max_dev = np.max(np.abs(theta_history - 1.0))
+        indicator_max = np.max(np.abs(indicator_history))
+
+        # Calcul du temps de récupération après chocs
+        large_deviations = np.where(np.abs(indicator_history) > 0.3)[0]
+        n_large_deviations = len(large_deviations)
+
+        print(f"\n📈 Résultats (crisis high volatility) :")
+        print(f"  ═══════════════════════════════════════════════════════════")
+        print(f"  VOLATILITÉ OBSERVÉE :")
+        print(f"    Thermomètre θ moyen : {theta_mean:.4f}")
+        print(f"    Écart-type θ : {theta_std:.4f} (↑ volatilité)")
+        print(f"    Déviation max |θ - 1| : {theta_max_dev:.4f}")
+        print(f"    Indicateur I max : {indicator_max:.4f}")
+        print(f"  ═══════════════════════════════════════════════════════════")
+        print(f"  RÉSILIENCE DU SYSTÈME :")
+        print(f"    Nombre de déviations |I| > 0.3 : {n_large_deviations}")
+        print(f"    Thermomètre final : {economy.thermometer():.4f}")
+        print(f"    Kappa κ final : {economy.rad.kappa:.4f}")
+        print(f"    Eta η final : {economy.rad.eta:.4f}")
+        print(f"  ═══════════════════════════════════════════════════════════")
+        print(f"  ÉTAT FINAL :")
+        print(f"    Population : {len(economy.agents)} agents")
+        print(f"    Gini : {economy.gini_coefficient():.4f}")
+        print(f"  ═══════════════════════════════════════════════════════════")
+
+        # Évaluation de la résilience
+        if theta_std < 0.5 and abs(theta_mean - 1.0) < 0.2:
+            print(f"  ✅ SYSTÈME RÉSILIENT : Maintient stabilité malgré volatilité")
+        elif theta_std < 1.0:
+            print(f"  🟡 SYSTÈME PARTIELLEMENT RÉSILIENT : Fluctuations maîtrisées")
+        else:
+            print(f"  ⚠️  SYSTÈME INSTABLE : Volatilité excessive")
+
+        print("\n" + "="*70 + "\n")
+
+        return economy
+
+    def run_no_regulation(self, steps: int = 1000) -> IRISEconomy:
+        """
+        Scénario NO REGULATION : Système sans régulation RAD (η=κ=1 fixes)
+
+        ═══════════════════════════════════════════════════════════════════════════
+        SCÉNARIO NO REGULATION - TÉMOIN SANS RAD
+        ═══════════════════════════════════════════════════════════════════════════
+
+        Ce scénario désactive complètement la régulation automatique du RAD en
+        fixant κ=η=1 constants. Il sert de TÉMOIN pour comparer avec les scénarios
+        régulés et démontrer l'apport de la régulation contracyclique.
+
+        OBJECTIF :
+        Démontrer l'importance critique du RAD en montrant qu'un système SANS
+        régulation contracyclique diverge de l'équilibre et accumule des
+        déséquilibres thermodynamiques (θ s'éloigne de 1).
+
+        MODULES ACTIFS :
+        - ✅ Démographie
+        - ✅ Entreprises dynamiques
+        - ✅ Combustion et Chambre de Relance
+        - ❌ Régulation RAD : κ=η=1 FIXES (pas d'ajustement contracyclique)
+        - ❌ Catastrophes (pour isoler l'effet de la non-régulation)
+
+        PARAMÈTRES FIGÉS :
+        - κ (kappa) = 1.0 CONSTANT (pas de modulation de liquidité)
+        - η (eta) = 1.0 CONSTANT (pas de modulation de production)
+        - Pas de mise à jour de κ et η par le RAD
+        - RU = (V_on × τ) / N sans modulation par κ
+
+        CE QU'ON OBSERVE (ATTENDU) :
+        1. Thermomètre θ dérive progressivement (ne reste pas proche de 1)
+        2. Indicateur I s'accumule (déséquilibre croissant)
+        3. Pas de mécanisme de rééquilibrage automatique
+        4. Instabilités structurelles à long terme
+        5. CONTRASTE fort avec scénarios régulés
+
+        COMPARAISON RECOMMANDÉE :
+        - Comparer avec run_baseline_stable() pour voir l'effet du RAD
+        - Observer θ(t) : avec RAD → oscille autour de 1, sans RAD → dérive
+
+        Args:
+            steps: Durée de la simulation en mois (défaut: 1000 ≈ 83 ans)
+
+        Returns:
+            Économie IRIS sans régulation (pour comparaison)
+        """
+        print("\n" + "="*70)
+        print("SCÉNARIO 10 : NO REGULATION - Témoin Sans RAD")
+        print("="*70)
+        print("\n📌 OBJECTIF : Démontrer l'importance du RAD par contraste")
+        print("   Configuration : κ=η=1 FIXES (pas de régulation)")
+        print("   Attente : Système diverge de l'équilibre θ=1\n")
+
+        # Création de l'économie (tous modules actifs sauf régulation)
+        economy = IRISEconomy(
+            initial_agents=self.n_agents,
+            gold_factor=1.0,
+            universal_income_rate=0.02,
+            # ═══════════════════════════════════════════════════════════════
+            # CONFIGURATION TÉMOIN (modules actifs, régulation désactivée)
+            # ═══════════════════════════════════════════════════════════════
+            enable_demographics=True,
+            enable_catastrophes=False,            # Pas de chocs pour isoler effet
+            enable_price_discovery=True,
+            enable_dynamic_business=True,
+            enable_business_combustion=True,
+            enable_chambre_relance=True,
+        )
+
+        # FIXATION de κ et η à 1.0 (désactivation régulation)
+        economy.rad.kappa = 1.0
+        economy.rad.eta = 1.0
+
+        print(f"État initial :")
+        print(f"  Population : {len(economy.agents)} agents")
+        print(f"  θ initial : {economy.thermometer():.4f}")
+        print(f"\n⚠️  RÉGULATION DÉSACTIVÉE :")
+        print(f"  κ (kappa) = 1.0 FIXE (pas de modulation liquidité)")
+        print(f"  η (eta) = 1.0 FIXE (pas de modulation production)")
+        print(f"  Pas de rééquilibrage automatique du thermomètre θ")
+
+        # Simulation SANS régulation (forcer κ=η=1 à chaque step)
+        print(f"\nSimulation de {steps} steps ({steps//12} ans) sans régulation...")
+
+        for step in range(steps):
+            economy.step(n_transactions=20)
+
+            # FORCE κ=η=1 à chaque step (désactive complètement le RAD)
+            economy.rad.kappa = 1.0
+            economy.rad.eta = 1.0
+
+            # Affichage périodique
+            if step % 120 == 0:  # Tous les 10 ans
+                theta = economy.thermometer()
+                indicator = economy.indicator()
+                print(f"  Année {step//12:3d} : θ={theta:.4f}, I={indicator:.4f}")
+
+        self.results['no_regulation'] = economy.history
+
+        # Analyse de la divergence
+        theta_history = np.array(economy.history['thermometer'])
+        indicator_history = np.array(economy.history['indicator'])
+
+        theta_mean = np.mean(theta_history)
+        theta_std = np.std(theta_history)
+        theta_final = economy.thermometer()
+        indicator_final = economy.indicator()
+
+        # Calcul de la tendance (drift)
+        theta_drift = theta_final - theta_history[0]
+
+        print(f"\n📈 Résultats (no regulation) :")
+        print(f"  ═══════════════════════════════════════════════════════════")
+        print(f"  DIVERGENCE THERMODYNAMIQUE :")
+        print(f"    Thermomètre θ moyen : {theta_mean:.4f} (cible = 1.0)")
+        print(f"    Écart-type θ : {theta_std:.4f}")
+        print(f"    Thermomètre θ final : {theta_final:.4f}")
+        print(f"    Dérive (drift) : {theta_drift:+.4f}")
+        print(f"  ═══════════════════════════════════════════════════════════")
+        print(f"  ABSENCE DE RÉGULATION :")
+        print(f"    Indicateur I final : {indicator_final:.4f} (cible = 0.0)")
+        print(f"    Kappa κ : 1.0000 (FIXE)")
+        print(f"    Eta η : 1.0000 (FIXE)")
+        print(f"  ═══════════════════════════════════════════════════════════")
+        print(f"  ÉTAT FINAL :")
+        print(f"    Population : {len(economy.agents)} agents")
+        print(f"    Gini : {economy.gini_coefficient():.4f}")
+        print(f"  ═══════════════════════════════════════════════════════════")
+
+        # Évaluation de la stabilité (normalement mauvaise)
+        if abs(theta_final - 1.0) > 0.2:
+            print(f"  ❌ SYSTÈME INSTABLE : θ diverge significativement de 1.0")
+            print(f"  ➜  Démontre l'importance de la régulation RAD")
+        elif abs(theta_final - 1.0) > 0.1:
+            print(f"  🟡 SYSTÈME PARTIELLEMENT INSTABLE : Déséquilibre modéré")
+        else:
+            print(f"  ⚠️  Résultat inattendu : système reste proche de l'équilibre")
+            print(f"  ➜  Peut indiquer une durée de simulation trop courte")
+
+        print("\n💡 RECOMMANDATION : Comparer avec run_baseline_stable() pour voir")
+        print("   l'effet stabilisateur du RAD (θ oscille autour de 1 vs dérive)")
         print("\n" + "="*70 + "\n")
 
         return economy

@@ -264,3 +264,112 @@ economy = runner.run_regulation_only(steps=120)  # 10 ans = 120 mois
    - C1 : Continue (chaque cycle) - ajuste κ et η
    - C2 : Profonde (tous les 12 cycles) - si |I| > 15%
    - C3 : Urgence (si |I| > 30%) - rebalancement direct de D
+
+---
+
+## Paramètres Tunables du Système IRIS
+
+Tableau récapitulatif de tous les paramètres configurables du système IRIS.
+
+### Paramètres RAD (Régulation Automatique Décentralisée)
+
+| Nom du Paramètre | Fichier Source | Rôle Économique | Valeur par Défaut | Remarques |
+|------------------|----------------|-----------------|-------------------|-----------|
+| **kappa_min** | `iris_rad.py` | Borne inférieure de κ (liquidité) | 0.5 | Limite le freinage contracyclique |
+| **kappa_max** | `iris_rad.py` | Borne supérieure de κ (liquidité) | 2.0 | Limite la stimulation contracyclique |
+| **kappa_beta** | `iris_rad.py` | Sensibilité de κ à l'indicateur I | 0.5 | Contrôle la réactivité de la régulation |
+| **kappa_smoothing** | `iris_rad.py` | Lissage temporel de κ (EMA) | 0.1 | Évite les oscillations brutales |
+| **eta_min** | `iris_rad.py` | Borne inférieure de η (combustion) | 0.5 | Limite le freinage de la production |
+| **eta_max** | `iris_rad.py` | Borne supérieure de η (combustion) | 2.0 | Limite la stimulation de la production |
+| **eta_alpha** | `iris_rad.py` | Sensibilité de η à l'indicateur I | 0.5 | Contrôle la réactivité de la production |
+| **eta_smoothing** | `iris_rad.py` | Lissage temporel de η (EMA) | 0.15 | Évite les oscillations brutales |
+| **delta_m** | `iris_rad.py` | Amortissement mensuel de D | 0.001041666 | ≈ 0.104%/mois ≈ 1.25%/an (théorie IRIS) |
+| **delta_m_annual** | `iris_rad.py` | Amortissement annuel de D | 0.0125 | ≈ 1.25%/an (référence annuelle) |
+
+### Paramètres Démographiques
+
+| Nom du Paramètre | Fichier Source | Rôle Économique | Valeur par Défaut | Remarques |
+|------------------|----------------|-----------------|-------------------|-----------|
+| **life_expectancy** | `iris_demographics.py` | Espérance de vie en années | 80.0 | Base pour calcul mortalité |
+| **birth_rate** | `iris_demographics.py` | Taux de natalité annuel | 0.0414 | 4.14% calibré pour croissance démographique |
+| **min_reproduction_age** | `iris_demographics.py` | Âge minimum de reproduction | 18 | Agents reproducteurs |
+| **max_reproduction_age** | `iris_demographics.py` | Âge maximum de reproduction | 50 | Limite période reproductive |
+| **retirement_age** | `iris_demographics.py` | Âge de la retraite | 65 | Classification actifs/retraités |
+| **wealth_influence** | `iris_demographics.py` | Influence richesse sur démographie | True | Active/désactive effets richesse |
+| **max_population** | `iris_demographics.py` | Population maximale autorisée | 10000 | Plafond démographique (0 = illimité) |
+| **consumption_D_per_year** | `iris_demographics.py` | D de consommation par personne/an | 1000.0 | Génération de D_consommation |
+
+### Paramètres Entreprises
+
+| Nom du Paramètre | Fichier Source | Rôle Économique | Valeur par Défaut | Remarques |
+|------------------|----------------|-----------------|-------------------|-----------|
+| **taux_creation** | `iris_entreprises.py` | Taux création entreprises annuel | 0.05 | 5% nouvelles entreprises/an |
+| **taux_faillite_base** | `iris_entreprises.py` | Taux faillite de base annuel | 0.03 | 3% risque faillite de base |
+| **seuil_rentabilite_base** | `iris_entreprises.py` | Seuil rentabilité V généré/cycle | 100.0 | V minimum pour viabilité |
+| **cycles_avant_faillite** | `iris_entreprises.py` | Cycles déficit avant faillite | 12 | 12 mois = 1 an de déficit toléré |
+| **salary_ratio** | `config_loader.py` | Part V généré → salaires (U) | 0.40 | 40% distribution organique |
+| **treasury_ratio** | `config_loader.py` | Part V généré → trésorerie (V) | 0.60 | 60% distribution organique |
+| **retention_threshold** | `config_loader.py` | Seuil rétention pour combustion | 0.20 | 20% du V_operationnel conservé |
+
+### Paramètres Catastrophes
+
+| Nom du Paramètre | Fichier Source | Rôle Économique | Valeur par Défaut | Remarques |
+|------------------|----------------|-----------------|-------------------|-----------|
+| **enable_natural** | `iris_catastrophes.py` | Active catastrophes naturelles | True | Tremblements de terre, inondations, etc. |
+| **enable_economic** | `iris_catastrophes.py` | Active catastrophes économiques | True | Krachs boursiers, crises liquidité |
+| **enable_political** | `iris_catastrophes.py` | Active catastrophes politiques | True | Guerres, sanctions, troubles civils |
+| **enable_technological** | `iris_catastrophes.py` | Active catastrophes technologiques | True | Cyberattaques, pannes systémiques |
+| **base_frequency** | `iris_catastrophes.py` | Probabilité catastrophe par an | 0.05 | 5% probabilité annuelle (Poisson) |
+
+### Paramètres Économiques Globaux
+
+| Nom du Paramètre | Fichier Source | Rôle Économique | Valeur par Défaut | Remarques |
+|------------------|----------------|-----------------|-------------------|-----------|
+| **universal_income_rate** (τ) | `config_loader.py` | Taux revenu universel | 0.02 | 2% de V_on distribué annuellement |
+| **transfer_probability** | `config_loader.py` | Probabilité transferts agents | 0.1 | 10% probabilité transaction/agent/step |
+| **max_transfer_fraction** | `config_loader.py` | Fraction max d'un transfert | 0.1 | Max 10% du solde U transférable |
+| **initial_total_V** | `config_loader.py` | Patrimoine total initial | 1000000.0 | Capital V de départ du système |
+| **gold_factor** | `iris_model.py` | Facteur d'ancrage or (legacy) | 1.0 | Hérité, non utilisé en pratique |
+| **alpha_RU** | `iris_model.py` | Contrainte variation max RU | 0.10 | Max 10% variation RU d'une année sur l'autre |
+
+### Paramètres Temporels
+
+| Nom du Paramètre | Fichier Source | Rôle Économique | Valeur par Défaut | Remarques |
+|------------------|----------------|-----------------|-------------------|-----------|
+| **STEPS_PER_YEAR** | `iris_model.py` | Nombre de steps par an | 12 | 1 step = 1 mois (convention globale) |
+| **T_period** (RAD C2) | `iris_model.py` | Période régulation C2 (profonde) | 12 | Régulation profonde tous les 12 mois |
+| **calibration_period** | `iris_model.py` | Période calibration auto | 50 | Calibration tous les 50 mois (~4 ans) |
+
+### Paramètres de Configuration Modules
+
+| Nom du Paramètre | Fichier Source | Rôle Économique | Valeur par Défaut | Remarques |
+|------------------|----------------|-----------------|-------------------|-----------|
+| **enable_demographics** | `iris_model.py` | Active module démographie | True | Naissances/décès/vieillissement |
+| **enable_catastrophes** | `iris_model.py` | Active module catastrophes | False | Chocs aléatoires |
+| **enable_price_discovery** | `iris_model.py` | Active découverte prix | True | Prix dynamiques V/U |
+| **enable_dynamic_business** | `iris_model.py` | Active entreprises dynamiques | False | Créations/faillites entreprises |
+| **enable_business_combustion** | `iris_model.py` | Active combustion entreprises | True | Production S+U→V |
+| **enable_chambre_relance** | `iris_model.py` | Active Chambre de Relance | True | Redistribution V_relance |
+
+### Notes d'Utilisation
+
+1. **Sensibilité des paramètres** :
+   - **kappa_beta, eta_alpha** : Plus élevés → régulation plus réactive (risque d'oscillations)
+   - **kappa_smoothing, eta_smoothing** : Plus élevés → changements plus rapides (moins de lissage)
+   - **birth_rate** : Calibré pour croissance démographique réaliste (~4.14%)
+   - **consumption_D_per_year** : Impact direct sur D_consommation et donc θ
+
+2. **Paramètres critiques pour stabilité** :
+   - **delta_m** : Amortissement de D (1.25%/an selon théorie IRIS)
+   - **universal_income_rate** : RU trop élevé → inflation, trop bas → stagnation
+   - **kappa_min/max, eta_min/max** : Bornes empêchent instabilités extrêmes
+
+3. **Scénarios recommandés** :
+   - **Baseline stable** : Valeurs par défaut, modules principaux activés
+   - **Crise volatilité** : Augmenter base_frequency catastrophes, réduire smoothing
+   - **Sans régulation** : Fixer κ=η=1, désactiver mise à jour RAD
+
+4. **Unités temporelles** :
+   - Toutes les fréquences en **mois** (steps)
+   - Taux annuels convertis : `taux_mensuel = (1 + taux_annuel)^(1/12) - 1`
+   - Convention : 1 step = 1 mois, 12 steps = 1 an
