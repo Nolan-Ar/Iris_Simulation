@@ -52,7 +52,7 @@ def run_performance_test(population, years=100, seed=42):
             enable_catastrophes=True,
             enable_price_discovery=True,
             enable_dynamic_business=True,
-            time_scale="years",
+            # time_scale="years",  # DEPRECATED: toujours en mois (1 step = 1 mois)
             max_population=population * 20,  # Limite dynamique
             taux_creation_entreprises=0.05,
             taux_faillite_entreprises=0.03,
@@ -61,21 +61,24 @@ def run_performance_test(population, years=100, seed=42):
         init_time = time.time() - init_start
 
         # Exécution de la simulation
-        print(f"Simulation en cours...")
+        # NOTE: years est en années, mais on simule en mois (1 step = 1 mois)
+        total_steps = years * 12
+        print(f"Simulation en cours ({years} années = {total_steps} mois/steps)...")
         sim_start = time.time()
 
         step_times = []
-        for year in range(years):
+        for step in range(total_steps):
             step_start = time.time()
             economy.step(n_transactions=10)
             step_times.append(time.time() - step_start)
 
-            # Affichage du progrès
-            if (year + 1) % max(1, years // 10) == 0:
+            # Affichage du progrès (tous les 12 steps = 1 an)
+            if (step + 1) % 12 == 0:  # Affiche tous les ans
+                current_year = (step + 1) // 12
                 theta = economy.thermometer()
                 pop = len(economy.agents)
-                avg_step_time = sum(step_times[-10:]) / min(10, len(step_times))
-                print(f"  Année {year + 1}/{years} - Pop: {pop} - θ: {theta:.4f} - Temps/step: {avg_step_time:.3f}s")
+                avg_step_time = sum(step_times[-12:]) / min(12, len(step_times))
+                print(f"  Année {current_year}/{years} - Pop: {pop} - θ: {theta:.4f} - Temps/step moyen: {avg_step_time:.3f}s")
 
         sim_time = time.time() - sim_start
         total_time = time.time() - start_time

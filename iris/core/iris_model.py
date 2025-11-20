@@ -10,6 +10,29 @@ Email: arnaultnolan@gmail.com
 Date: 2025
 
 ═══════════════════════════════════════════════════════════════════════════════
+ÉCHELLE DE TEMPS : 1 step = 1 mois
+═══════════════════════════════════════════════════════════════════════════════
+
+CONVENTION TEMPORELLE :
+- 1 step de simulation = 1 mois calendaire
+- STEPS_PER_YEAR = 12 (constante globale)
+- Toutes les fréquences sont exprimées en mois (steps)
+
+FRÉQUENCES DES MÉCANISMES :
+- Revenu Universel (RU) : distribué tous les 12 steps (1 fois/an)
+- Démographie (naissances/décès/vieillissement) : mise à jour tous les 12 steps (1 fois/an)
+- Combustion entreprises : tous les 1 step (1 fois/mois) - production continue
+- Chambre de Relance (redistribution pool) : tous les 12 steps (1 fois/an)
+- Régulation RAD C2 (profonde) : tous les 12 steps (T_period = 12)
+- Calibration automatique : tous les 50 steps (≈ 4 ans)
+- Catastrophes : probabilité annuelle (déclenchement potentiel chaque step)
+- Amortissement D : δ_m = 0.104%/mois appliqué à chaque step
+
+EXEMPLE D'UTILISATION :
+  economy = IRISEconomy(initial_agents=100)
+  economy.simulate(steps=120)  # Simule 120 mois = 10 ans
+
+═══════════════════════════════════════════════════════════════════════════════
 MAPPING THÉORIE ↔ CODE : VARIABLES, CAPTEURS ET PARAMÈTRES
 ═══════════════════════════════════════════════════════════════════════════════
 
@@ -159,6 +182,12 @@ from .iris_comptes_entreprises import (
 )
 from .iris_prix import PriceManager, GoodType
 from .iris_entreprises import EntrepriseManager
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CONSTANTE TEMPORELLE GLOBALE
+# ═══════════════════════════════════════════════════════════════════════════════
+STEPS_PER_YEAR = 12  # 1 step = 1 mois, donc 12 steps = 1 an
 
 
 class AssetType(Enum):
@@ -724,7 +753,7 @@ class IRISEconomy:
                  enable_catastrophes: bool = True,
                  enable_price_discovery: bool = True,
                  enable_dynamic_business: bool = True,
-                 time_scale: str = "years",
+                 time_scale: Optional[str] = None,  # DEPRECATED: 1 step = 1 mois (fixe)
                  max_population: int = 10000,
                  initial_total_wealth_V: Optional[float] = None,
                  mode_population: str = "object",
@@ -737,15 +766,17 @@ class IRISEconomy:
         Cette version unifie l'ancien iris_model.py avec iris_v2_1_model.py
         en créant une architecture modulaire configurable.
 
+        ÉCHELLE TEMPORELLE : 1 step = 1 mois (STEPS_PER_YEAR = 12)
+
         Args:
             initial_agents: Nombre d'agents initiaux (population de départ)
             gold_factor: Facteur or de zone (équivalent or local)
-            universal_income_rate: Taux de revenu universel
+            universal_income_rate: Taux de revenu universel (annuel)
             enable_demographics: Active la démographie (naissances/décès/âges)
             enable_catastrophes: Active les catastrophes aléatoires
             enable_price_discovery: Active le mécanisme de prix explicites
             enable_dynamic_business: Active les entreprises dynamiques (créations/faillites)
-            time_scale: "steps" ou "years" pour l'échelle de temps
+            time_scale: DEPRECATED - Ignoré, l'échelle est toujours en mois (1 step = 1 mois)
             max_population: Population maximale (0 = illimité, défaut: 10000)
             initial_total_wealth_V: Richesse totale initiale à répartir entre agents
                                     (None = calcul auto: ~5.78 V/agent, ancien défaut: 1 200 000)
@@ -771,7 +802,17 @@ class IRISEconomy:
         self.rad = RADState()
         self.gold_factor = gold_factor
         self.universal_income_rate = universal_income_rate
-        self.time_scale = time_scale
+
+        # DEPRECATED: time_scale est maintenant toujours "months" (1 step = 1 mois)
+        if time_scale is not None and time_scale != "months":
+            import warnings
+            warnings.warn(
+                f"time_scale='{time_scale}' est ignoré. L'échelle est maintenant fixée à 1 step = 1 mois.",
+                DeprecationWarning,
+                stacklevel=2
+            )
+        self.time_scale = "months"  # Fixé, toujours en mois
+
         self.enable_demographics = enable_demographics
         self.enable_catastrophes = enable_catastrophes
         self.enable_price_discovery = enable_price_discovery
@@ -1731,8 +1772,8 @@ class IRISEconomy:
         """
         Avance la simulation d'un pas de temps
 
-        Si time_scale="years", ce pas représente 1 année
-        Si time_scale="steps", ce pas représente une période abstraite
+        ÉCHELLE TEMPORELLE : 1 step = 1 mois
+        Les mécanismes à fréquence annuelle sont déclenchés tous les STEPS_PER_YEAR = 12 steps
 
         Args:
             n_transactions: Nombre de transactions à simuler
@@ -1744,14 +1785,14 @@ class IRISEconomy:
         deaths_this_step = 0
         catastrophes_this_step = 0
 
-        # 0a. Vieillissement de la population (si démographie activée)
-        if self.enable_demographics and self.time_scale == "years":
+        # 0a. Vieillissement de la population (tous les 12 steps = 1 fois/an)
+        if self.enable_demographics and self.time % STEPS_PER_YEAR == 0:
             if self.mode_population == "object":
                 self.agent_ages = self.demographics.age_population(self.agent_ages)
             # En mode vectorisé, le vieillissement est géré dans process_vectorized()
 
-        # 0b. Catastrophes aléatoires (si activées)
-        if self.enable_catastrophes and self.time_scale == "years":
+        # 0b. Catastrophes aléatoires (déclenchement potentiel chaque step, probabilité annuelle)
+        if self.enable_catastrophes and self.time % STEPS_PER_YEAR == 0:
             new_events = self.catastrophe_manager.update(
                 self.time, self.agents, self.agent_ages, self
             )
@@ -1800,8 +1841,8 @@ class IRISEconomy:
                         amount = min(from_agent.U_balance * 0.1, from_agent.U_balance * 0.5)
                         self.transaction(from_id, to_id, amount)
 
-            # 4. Distribution du revenu universel (moins fréquent)
-            if self.time % 50 == 0:
+            # 4. Distribution du revenu universel (tous les 12 steps = 1 fois/an)
+            if self.time % STEPS_PER_YEAR == 0:
                 self.distribute_universal_income()
 
         elif self.mode_population == "vectorized":
@@ -1832,8 +1873,8 @@ class IRISEconomy:
                 max_fraction=0.1
             )
 
-            # 4. Distribution du revenu universel (vectorisé)
-            if self.time % 50 == 0:
+            # 4. Distribution du revenu universel (tous les 12 steps = 1 fois/an)
+            if self.time % STEPS_PER_YEAR == 0:
                 # Applique le revenu universel à tous les agents vivants
                 ru_amount = self.universal_income_rate * self.population.total_V() / max(1, self.population.total_population())
                 self.population.apply_universal_income(ru_amount)
@@ -1841,58 +1882,57 @@ class IRISEconomy:
             # Mise à jour de la richesse
             self.population.update_wealth()
 
-        # 4a. COMBUSTION entreprises : S + U → V, puis distribution ORGANIQUE 40/60 (tous les 10 cycles)
+        # 4a. COMBUSTION entreprises : S + U → V, puis distribution ORGANIQUE 40/60 (chaque step = 1 fois/mois)
         # ALIGNEMENT THÉORIQUE : 40% → masse salariale, 60% → trésorerie
         # NOUVEAU : Application du coefficient η (ETA) de rendement
         business_masse_salariale_total = 0.0
         business_NFT_created_count = 0
-        if self.time % 10 == 0:
-            # Calcule le coefficient η (ETA) de rendement de la combustion
-            # η module la productivité selon la tension thermométrique θ
-            # Surchauffe (θ > 1) → η < 1 (freine production)
-            # Sous-régime (θ < 1) → η > 1 (stimule production)
-            eta = self.compute_eta()
+        # Calcule le coefficient η (ETA) de rendement de la combustion
+        # η module la productivité selon la tension thermométrique θ
+        # Surchauffe (θ > 1) → η < 1 (freine production)
+        # Sous-régime (θ < 1) → η > 1 (stimule production)
+        eta = self.compute_eta()
 
-            # Simule la COMBUSTION (S + U → V) pour les entreprises
-            for business_id in list(self.registre_entreprises.comptes.keys()):
-                compte = self.registre_entreprises.get_compte(business_id)
-                if compte:
-                    # COMBUSTION BRUTE génère du V proportionnel à V_entreprise
-                    # Taux de génération brut : 5% du V_entreprise tous les 10 cycles
-                    V_genere_brut = compte.V_entreprise * 0.05
+        # Simule la COMBUSTION (S + U → V) pour les entreprises
+        for business_id in list(self.registre_entreprises.comptes.keys()):
+            compte = self.registre_entreprises.get_compte(business_id)
+            if compte:
+                # COMBUSTION BRUTE génère du V proportionnel à V_entreprise
+                # Taux de génération brut mensuel : 0.5% du V_entreprise par mois ≈ 6% annuel
+                V_genere_brut = compte.V_entreprise * 0.005
 
-                    # APPLICATION DU COEFFICIENT η (RÉGULATION THERMODYNAMIQUE)
-                    # V_effectif = V_brut × η
-                    # Ce mécanisme permet au système de s'autoréguler :
-                    # - En surchauffe : η < 1 → réduit la création de V → refroidit
-                    # - En sous-régime : η > 1 → augmente la création de V → réchauffe
-                    V_genere_effectif = V_genere_brut * eta
+                # APPLICATION DU COEFFICIENT η (RÉGULATION THERMODYNAMIQUE)
+                # V_effectif = V_brut × η
+                # Ce mécanisme permet au système de s'autoréguler :
+                # - En surchauffe : η < 1 → réduit la création de V → refroidit
+                # - En sous-régime : η > 1 → augmente la création de V → réchauffe
+                V_genere_effectif = V_genere_brut * eta
 
-                    # Distribue le V EFFECTIF généré avec schéma ORGANIQUE 40/60
-                    # 40% du V → Masse salariale en U (rémunérations collaborateurs)
-                    # 60% du V → Trésorerie (V_operationnel)
-                    masse_salariale_en_U, nft_genere = self.registre_entreprises.process_V_genere(
-                        business_id, V_genere_effectif, self.time
-                    )
+                # Distribue le V EFFECTIF généré avec schéma ORGANIQUE 40/60
+                # 40% du V → Masse salariale en U (rémunérations collaborateurs)
+                # 60% du V → Trésorerie (V_operationnel)
+                masse_salariale_en_U, nft_genere = self.registre_entreprises.process_V_genere(
+                    business_id, V_genere_effectif, self.time
+                )
 
-                    business_masse_salariale_total += masse_salariale_en_U
-                    if nft_genere:
-                        business_NFT_created_count += 1
-                        # Impact sur D_contractuelle (nouveau titre productif)
-                        self.rad.D_contractuelle += nft_genere.valeur_convertie * 0.5
+                business_masse_salariale_total += masse_salariale_en_U
+                if nft_genere:
+                    business_NFT_created_count += 1
+                    # Impact sur D_contractuelle (nouveau titre productif)
+                    self.rad.D_contractuelle += nft_genere.valeur_convertie * 0.5
 
-            # Distribution de la masse salariale des entreprises (en U)
-            # IMPORTANT : Ce sont des SALAIRES (revenus productifs), pas du RU.
-            # Dans cette version simplifiée, on redistribue aux agents comme proxy.
-            if business_masse_salariale_total > 0 and len(self.agents) > 0:
-                montant_U_par_agent = business_masse_salariale_total / len(self.agents)
-                for agent in self.agents.values():
-                    agent.U_balance += montant_U_par_agent
-                # Impact sur D_regulatrice (flux de rémunérations)
-                self.rad.D_regulatrice += business_masse_salariale_total * 0.2
+        # Distribution de la masse salariale des entreprises (en U)
+        # IMPORTANT : Ce sont des SALAIRES (revenus productifs), pas du RU.
+        # Dans cette version simplifiée, on redistribue aux agents comme proxy.
+        if business_masse_salariale_total > 0 and len(self.agents) > 0:
+            montant_U_par_agent = business_masse_salariale_total / len(self.agents)
+            for agent in self.agents.values():
+                agent.U_balance += montant_U_par_agent
+            # Impact sur D_regulatrice (flux de rémunérations)
+            self.rad.D_regulatrice += business_masse_salariale_total * 0.2
 
-        # 4b. Redistribution Chambre de Relance (tous les 50 cycles)
-        if self.time % 50 == 0 and len(self.agents) > 0:
+        # 4b. Redistribution Chambre de Relance (tous les 12 steps = 1 fois/an)
+        if self.time % STEPS_PER_YEAR == 0 and len(self.agents) > 0:
             montant_RU_CR, delta_D_CR, invest, gov = self.chambre_relance.redistribute_pool(
                 cycle=self.time,
                 nb_beneficiaires_RU=len(self.agents),
@@ -1910,13 +1950,11 @@ class IRISEconomy:
 
         # 5b. Amortissement global de la dette thermométrique D (conforme IRIS)
         # Document IRIS impose : δ_m = 0.001041666 par mois ≈ 0.104%/mois ≈ 1.25%/an
+        # Appliqué à chaque step (1 step = 1 mois)
         total_D_before = self.rad.total_D()
         if total_D_before > 0:
-            # Choix de l'amortissement selon l'échelle temporelle
-            if self.time_scale == "years":
-                effective_delta = 0.0125  # Amortissement annuel ~1.25%
-            else:
-                effective_delta = self.rad.delta_m  # Amortissement mensuel
+            # Amortissement mensuel : δ_m = 0.104%/mois
+            effective_delta = self.rad.delta_m
 
             # Calcul de l'amortissement
             amort = effective_delta * total_D_before
@@ -1934,8 +1972,8 @@ class IRISEconomy:
         births_this_step = 0
         deaths_this_step = 0
 
-        # 6. Démographie : décès et naissances (si activée et échelle = années)
-        if self.enable_demographics and self.time_scale == "years":
+        # 6. Démographie : décès et naissances (tous les 12 steps = 1 fois/an)
+        if self.enable_demographics and self.time % STEPS_PER_YEAR == 0:
             if self.mode_population == "object":
                 # === MODE OBJET : traitement individuel des agents ===
                 # 6a. Accumulation annuelle des biens de consommation

@@ -2,6 +2,39 @@
 
 Ce document établit la correspondance entre les symboles théoriques du système IRIS et leur implémentation dans le code.
 
+## Échelle Temporelle
+
+**CONVENTION : 1 step = 1 mois**
+
+- Constante globale : `STEPS_PER_YEAR = 12` (définie dans `iris_model.py`)
+- Toutes les fréquences sont exprimées en mois (steps)
+- Les mécanismes annuels sont déclenchés tous les 12 steps
+
+### Fréquences des Mécanismes
+
+| Mécanisme | Fréquence (steps) | Fréquence (années) | Code |
+|-----------|-------------------|-------------------|------|
+| **Combustion entreprises** | Chaque step (1) | 12 fois/an | `step()` - production mensuelle |
+| **Revenu Universel (RU)** | Tous les 12 steps | 1 fois/an | `if self.time % STEPS_PER_YEAR == 0` |
+| **Démographie** (naissances/décès) | Tous les 12 steps | 1 fois/an | `if self.time % STEPS_PER_YEAR == 0` |
+| **Chambre de Relance** | Tous les 12 steps | 1 fois/an | `if self.time % STEPS_PER_YEAR == 0` |
+| **Catastrophes** | Tous les 12 steps | 1 fois/an | `if self.time % STEPS_PER_YEAR == 0` |
+| **Régulation RAD C2** | Tous les 12 steps | 1 fois/an | `T_period = 12` |
+| **Calibration auto** | Tous les 50 steps | ~4 ans | `calibration_period = 50` |
+| **Amortissement D** | Chaque step (1) | 12 fois/an | δ_m = 0.104%/mois appliqué |
+
+### Exemple d'Utilisation
+
+```python
+from iris.core.iris_model import IRISEconomy, STEPS_PER_YEAR
+
+# Créer l'économie
+economy = IRISEconomy(initial_agents=100)
+
+# Simuler 10 ans = 120 mois = 120 steps
+economy.simulate(steps=10 * STEPS_PER_YEAR)  # 120 steps
+```
+
 ## Variables d'État Macro
 
 | Symbole Théorique | Signification | Variable/Attribut Code | Fichier + Fonction |

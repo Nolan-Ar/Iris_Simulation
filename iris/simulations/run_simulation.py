@@ -236,7 +236,7 @@ def main():
         enable_catastrophes=not args.no_catastrophes,
         enable_price_discovery=not args.no_prices,
         enable_dynamic_business=not args.no_business,
-        time_scale="years",
+        # time_scale="years",  # DEPRECATED: toujours en mois maintenant (1 step = 1 mois)
         max_population=args.max_population,
         initial_total_wealth_V=args.initial_total_V,
         mode_population=args.mode_population,
@@ -246,20 +246,25 @@ def main():
     )
 
     # Exécution de la simulation
-    print(f"\nDémarrage de la simulation ({args.years} années)...")
+    # NOTE: args.years est maintenant interprété comme des années, mais on simule en mois
+    # Donc args.years années = args.years * 12 mois
+    total_steps = args.years * 12  # Conversion années → mois (1 step = 1 mois)
+    print(f"\nDémarrage de la simulation ({args.years} années = {total_steps} mois/steps)...")
 
     try:
-        for year in range(args.years):
+        for step in range(total_steps):
             economy.step(n_transactions=args.transactions)
 
-            # Affichage du progrès
-            if args.verbose or (year + 1) % max(1, args.years // 20) == 0:
+            # Affichage du progrès (tous les 12 steps = 1 an)
+            if args.verbose or (step + 1) % 12 == 0:  # Affiche tous les ans
                 theta = economy.thermometer()
                 if economy.mode_population == "object":
                     pop = len(economy.agents)
                 else:  # vectorized
                     pop = economy.population.total_population()
-                print(f"  Année {year + 1}/{args.years} - Pop: {pop} - θ: {theta:.4f}")
+                current_year = (step + 1) // 12
+                if (step + 1) % 12 == 0:  # Affiche seulement à la fin de chaque année
+                    print(f"  Année {current_year}/{args.years} - Pop: {pop} - θ: {theta:.4f}")
 
         print("\n✓ Simulation terminée avec succès!")
 

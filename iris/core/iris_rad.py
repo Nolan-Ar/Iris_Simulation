@@ -271,17 +271,20 @@ class RADState:
         # Application des bornes (sécurité)
         self.eta = float(np.clip(self.eta, self.eta_min, self.eta_max))
 
-    def apply_amortization(self, time_scale: str = "years") -> float:
+    def apply_amortization(self, time_scale: str = "months") -> float:
         """
         Applique l'amortissement global de D selon la théorie IRIS.
 
         Document IRIS impose : δ_m ≈ 0.104%/mois ≈ 1.25%/an
 
+        ÉCHELLE TEMPORELLE : 1 step = 1 mois
+        L'amortissement mensuel est appliqué à chaque appel (δ_m = 0.104%/mois).
+
         L'amortissement est appliqué proportionnellement sur toutes les
         composantes de D pour maintenir leur ratio relatif.
 
         Args:
-            time_scale: "years" ou "months" (détermine le taux d'amortissement)
+            time_scale: DEPRECATED - Toujours "months" (1 step = 1 mois)
 
         Returns:
             Montant total amorti
@@ -291,11 +294,8 @@ class RADState:
         if total_D_before < 1e-6:
             return 0.0
 
-        # Choix du taux selon l'échelle temporelle
-        if time_scale == "years":
-            delta = self.delta_m_annual  # ≈ 1.25% par an
-        else:
-            delta = self.delta_m  # ≈ 0.104% par mois
+        # Amortissement mensuel : δ_m ≈ 0.104%/mois
+        delta = self.delta_m
 
         # Calcul de l'amortissement
         amort = delta * total_D_before
@@ -307,7 +307,7 @@ class RADState:
         self.D_consommation *= ratio
         self.D_catastrophes *= ratio
 
-        logger.debug(f"Amortized D: {amort:.2f} ({delta*100:.2f}% of {total_D_before:.2f})")
+        logger.debug(f"Amortized D: {amort:.2f} ({delta*100:.4f}% of {total_D_before:.2f})")
 
         return amort
 
