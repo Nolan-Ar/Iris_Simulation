@@ -1,0 +1,120 @@
+# IRIS Economic System - Configuration
+# =====================================
+
+# Simulation Parameters
+simulation:
+  # Population settings
+  population:
+    default_size: 1000
+    min_size: 10
+    max_size: 1000000
+    initial_mean_age: 36.0
+    max_age: 90.0
+
+  # Economic parameters
+  economy:
+    initial_total_V: 1000000.0
+    universal_income_rate: 0.02
+    transfer_probability: 0.1
+    max_transfer_fraction: 0.1
+
+  # Business settings
+  businesses:
+    enabled: true
+    initial_count: 10
+    salary_ratio: 0.40  # 40% masse salariale
+    treasury_ratio: 0.60  # 60% trésorerie
+    retention_threshold: 0.20
+
+  # Demographics
+  demographics:
+    enabled: true
+    birth_rate_base: 0.015
+    death_rate_base: 0.01
+    mortality_age_threshold: 70.0
+
+  # Catastrophes
+  catastrophes:
+    enabled: false
+    base_probability: 0.01
+    max_magnitude: 0.5
+
+  # Oracle / NFT
+  oracle:
+    enabled: true
+    nft_creation_threshold: 100000.0
+    equilibrium_tolerance: 0.05
+
+# Simulation Execution
+execution:
+  default_steps: 100
+  seed: null  # null = random, or specify an integer
+  log_interval: 10
+  save_history: true
+
+# Performance
+performance:
+  use_vectorized: true
+  multiprocessing: false
+  n_workers: 4
+  batch_size: 1000
+
+# Logging
+logging:
+  level: INFO  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "iris_simulation.log"
+  console: true
+  file_enabled: true
+
+# Output
+output:
+  results_dir: "simulation_results"
+  plots_dir: "plots"
+  data_dir: "data"
+  export_format: "json"  # json, csv, excel
+  save_plots: true
+  plot_format: "png"  # png, svg, pdf
+
+# Validation
+validation:
+  enabled: true
+  monte_carlo_runs: 100
+  sensitivity_analysis: true
+  statistical_tests: true
+  confidence_level: 0.95
+
+# Safety thresholds (prevent div/0, overflow, etc.)
+safety:
+  min_positive_value: 1e-10
+  max_value: 1e15
+  epsilon: 1e-10
+  check_nan: true
+  check_inf: true
+
+# Scenario presets
+scenarios:
+  baseline:
+    name: "Baseline"
+    population_size: 1000
+    steps: 100
+    catastrophes: false
+
+  growth:
+    name: "Economic Growth"
+    population_size: 2000
+    steps: 200
+    universal_income_rate: 0.03
+
+  crisis:
+    name: "Economic Crisis"
+    population_size: 1000
+    steps: 150
+    catastrophes: true
+    catastrophe_probability: 0.05
+
+  large_scale:
+    name: "Large Scale"
+    population_size: 100000
+    steps: 500
+    use_vectorized: true
