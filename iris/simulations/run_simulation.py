@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from iris.core.iris_model import IRISEconomy
 from iris.analysis.iris_visualizer import IRISVisualizer
+from iris.utils.config_loader import load_config, get_config_value
 
 
 def parse_arguments():
@@ -52,14 +53,28 @@ Exemples d'utilisation:
         """
     )
 
-    # Paramètres de base
+    # Configuration
     parser.add_argument(
-        '--population', type=int, default=100,
-        help='Nombre d\'agents initiaux (défaut: 100)'
+        '--config', type=str, default=None,
+        help='Chemin vers le fichier de configuration YAML (défaut: config.yaml si existe)'
     )
     parser.add_argument(
-        '--years', type=int, default=100,
-        help='Durée de la simulation en années (défaut: 100)'
+        '--scenario', type=str, default=None,
+        help='Nom du scénario prédéfini (baseline_stable, crisis_high_volatility, no_regulation, regulation_only)'
+    )
+    parser.add_argument(
+        '--steps', type=int, default=None,
+        help='Nombre de steps (mois) de simulation. Si non spécifié, utilise --years ou config'
+    )
+
+    # Paramètres de base
+    parser.add_argument(
+        '--population', type=int, default=None,
+        help='Nombre d\'agents initiaux (défaut: depuis config ou 100)'
+    )
+    parser.add_argument(
+        '--years', type=int, default=None,
+        help='Durée de la simulation en années (défaut: depuis config ou 100)'
     )
     parser.add_argument(
         '--max-population', '--max-pop', type=int, default=10000,
@@ -126,6 +141,110 @@ Exemples d'utilisation:
     )
 
     return parser.parse_args()
+
+
+def load_and_merge_config(args):
+    """
+    Charge la configuration et fusionne avec les arguments CLI
+
+    Priorité: CLI args > Scenario config > config.yaml > defaults
+    """
+    # Chargement du fichier de config
+    config = None
+    if args.config:
+        config = load_config(args.config)
+    else:
+        # Tente de charger config.yaml par défaut
+        default_config_path = Path(__file__).parent.parent.parent / "config.yaml"
+        if default_config_path.exists():
+            config = load_config(str(default_config_path))
+
+    # Si un scénario est spécifié, charge ses paramètres
+    scenario_config = None
+    if args.scenario and config:
+        scenario_config = get_config_value('scenarios', args.scenario, config=config)
+        if not scenario_config:
+            print(f"⚠ Scénario '{args.scenario}' non trouvé dans config.yaml")
+
+    # Fusion des configs (scenario > config général)
+    merged = {}
+
+    # 1. Valeurs par défaut du code
+    defaults = {
+        'population': 100,
+        'years': 100,
+        'steps': None,
+        'enable_demographics': True,
+        'enable_catastrophes': False,
+        'enable_price_discovery': True,
+        'enable_business_combustion': True,
+        'enable_dynamic_business': True,
+        'enable_chambre_relance': True,
+        'max_population': 10000,
+        'mode_population': 'object',
+        'transactions': 10,
+    }
+    merged.update(defaults)
+
+    # 2. Config.yaml général
+    if config:
+        merged['population'] = get_config_value('simulation', 'population', 'default_size', default=defaults['population'], config=config)
+        merged['steps'] = get_config_value('execution', 'default_steps', default=None, config=config)
+        merged['enable_demographics'] = get_config_value('modules', 'enable_demographics', default=defaults['enable_demographics'], config=config)
+        merged['enable_catastrophes'] = get_config_value('modules', 'enable_catastrophes', default=defaults['enable_catastrophes'], config=config)
+        merged['enable_price_discovery'] = get_config_value('modules', 'enable_price_discovery', default=defaults['enable_price_discovery'], config=config)
+        merged['enable_business_combustion'] = get_config_value('modules', 'enable_business_combustion', default=defaults['enable_business_combustion'], config=config)
+        merged['enable_dynamic_business'] = get_config_value('modules', 'enable_dynamic_business', default=defaults['enable_dynamic_business'], config=config)
+        merged['enable_chambre_relance'] = get_config_value('modules', 'enable_chambre_relance', default=defaults['enable_chambre_relance'], config=config)
+
+    # 3. Scénario spécifique (override config général)
+    if scenario_config:
+        merged['population'] = scenario_config.get('population_size', merged['population'])
+        merged['steps'] = scenario_config.get('steps', merged['steps'])
+
+        # Modules du scénario
+        if 'modules' in scenario_config:
+            scenario_modules = scenario_config['modules']
+            merged['enable_demographics'] = scenario_modules.get('enable_demographics', merged['enable_demographics'])
+            merged['enable_catastrophes'] = scenario_modules.get('enable_catastrophes', merged['enable_catastrophes'])
+            merged['enable_price_discovery'] = scenario_modules.get('enable_price_discovery', merged['enable_price_discovery'])
+            merged['enable_business_combustion'] = scenario_modules.get('enable_business_combustion', merged['enable_business_combustion'])
+            merged['enable_dynamic_business'] = scenario_modules.get('enable_dynamic_business', merged['enable_dynamic_business'])
+
+    # 4. Arguments CLI (priorité maximale)
+    if args.population is not None:
+        merged['population'] = args.population
+    if args.steps is not None:
+        merged['steps'] = args.steps
+    elif args.years is not None:
+        # Conversion années → steps (1 step = 1 mois)
+        merged['steps'] = args.years * 12
+
+    # Modules CLI (--no-demographics, etc.)
+    if args.no_demographics:
+        merged['enable_demographics'] = False
+    if args.no_catastrophes:
+        merged['enable_catastrophes'] = False
+    if args.no_prices:
+        merged['enable_price_discovery'] = False
+    if args.no_business:
+        merged['enable_dynamic_business'] = False
+
+    # Si steps toujours None, calculer depuis years ou config
+    if merged['steps'] is None:
+        if args.years is not None:
+            merged['steps'] = args.years * 12
+        else:
+            merged['steps'] = merged.get('years', defaults['years']) * 12
+
+    merged['mode_population'] = args.mode_population
+    merged['max_population'] = args.max_population
+    merged['transactions'] = args.transactions
+    merged['seed'] = args.seed
+    merged['taux_creation'] = args.taux_creation
+    merged['taux_faillite'] = args.taux_faillite
+
+    return merged
 
 
 def print_summary(economy: IRISEconomy):
@@ -214,46 +333,58 @@ def main():
     """Fonction principale"""
     args = parse_arguments()
 
+    # Charge et fusionne la configuration
+    cfg = load_and_merge_config(args)
+
     print("\n" + "="*70)
     print("IRIS v2.1 - Système Économique Intégratif")
     print("="*70)
+
+    # Affiche la config source
+    if args.scenario:
+        print(f"\n✓ Scénario: {args.scenario}")
+    elif args.config:
+        print(f"\n✓ Configuration: {args.config}")
+
     print(f"\nConfiguration de la simulation:")
-    print(f"  Population initiale: {args.population}")
-    print(f"  Durée: {args.years} années")
-    print(f"  Mode population: {args.mode_population}")
-    print(f"  Démographie: {'Désactivée' if args.no_demographics else 'Activée'}")
-    print(f"  Catastrophes: {'Désactivées' if args.no_catastrophes else 'Activées'}")
-    print(f"  Prix explicites: {'Désactivés' if args.no_prices else 'Activés'}")
-    print(f"  Entreprises dynamiques: {'Désactivées' if args.no_business else 'Activées'}")
-    if args.seed is not None:
-        print(f"  Graine aléatoire: {args.seed}")
+    print(f"  Population initiale: {cfg['population']}")
+    print(f"  Durée: {cfg['steps']} steps ({cfg['steps'] // 12} années)")
+    print(f"  Mode population: {cfg['mode_population']}")
+    print(f"  Démographie: {'Activée' if cfg['enable_demographics'] else 'Désactivée'}")
+    print(f"  Catastrophes: {'Activées' if cfg['enable_catastrophes'] else 'Désactivées'}")
+    print(f"  Prix explicites: {'Activés' if cfg['enable_price_discovery'] else 'Désactivés'}")
+    print(f"  Entreprises dynamiques: {'Activées' if cfg['enable_dynamic_business'] else 'Désactivées'}")
+    if cfg['seed'] is not None:
+        print(f"  Graine aléatoire: {cfg['seed']}")
     print("="*70)
 
     # Création de l'économie IRIS
     economy = IRISEconomy(
-        initial_agents=args.population,
-        enable_demographics=not args.no_demographics,
-        enable_catastrophes=not args.no_catastrophes,
-        enable_price_discovery=not args.no_prices,
-        enable_dynamic_business=not args.no_business,
+        initial_agents=cfg['population'],
+        enable_demographics=cfg['enable_demographics'],
+        enable_catastrophes=cfg['enable_catastrophes'],
+        enable_price_discovery=cfg['enable_price_discovery'],
+        enable_dynamic_business=cfg['enable_dynamic_business'],
+        enable_business_combustion=cfg['enable_business_combustion'],
+        enable_chambre_relance=cfg['enable_chambre_relance'],
         # time_scale="years",  # DEPRECATED: toujours en mois maintenant (1 step = 1 mois)
-        max_population=args.max_population,
+        max_population=cfg['max_population'],
         initial_total_wealth_V=args.initial_total_V,
-        mode_population=args.mode_population,
-        taux_creation_entreprises=args.taux_creation,
-        taux_faillite_entreprises=args.taux_faillite,
-        seed=args.seed
+        mode_population=cfg['mode_population'],
+        taux_creation_entreprises=cfg['taux_creation'],
+        taux_faillite_entreprises=cfg['taux_faillite'],
+        seed=cfg['seed']
     )
 
     # Exécution de la simulation
-    # NOTE: args.years est maintenant interprété comme des années, mais on simule en mois
-    # Donc args.years années = args.years * 12 mois
-    total_steps = args.years * 12  # Conversion années → mois (1 step = 1 mois)
-    print(f"\nDémarrage de la simulation ({args.years} années = {total_steps} mois/steps)...")
+    # NOTE: 1 step = 1 mois (STEPS_PER_YEAR = 12)
+    total_steps = cfg['steps']
+    years = total_steps // 12
+    print(f"\nDémarrage de la simulation ({years} années = {total_steps} mois/steps)...")
 
     try:
         for step in range(total_steps):
-            economy.step(n_transactions=args.transactions)
+            economy.step(n_transactions=cfg['transactions'])
 
             # Affichage du progrès (tous les 12 steps = 1 an)
             if args.verbose or (step + 1) % 12 == 0:  # Affiche tous les ans
@@ -264,7 +395,7 @@ def main():
                     pop = economy.population.total_population()
                 current_year = (step + 1) // 12
                 if (step + 1) % 12 == 0:  # Affiche seulement à la fin de chaque année
-                    print(f"  Année {current_year}/{args.years} - Pop: {pop} - θ: {theta:.4f}")
+                    print(f"  Année {current_year}/{years} - Pop: {pop} - θ: {theta:.4f}")
 
         print("\n✓ Simulation terminée avec succès!")
 

@@ -24,7 +24,7 @@ if requirements_file.exists():
 
 setup(
     name="iris-economic-system",
-    version="1.0.0",
+    version="2.1.0",
     author="Arnault Nolan",
     author_email="arnaultnolan@gmail.com",
     description="IRIS - Integrative Resilience Intelligence System - Economic Simulation",
@@ -50,13 +50,17 @@ setup(
         "dev": [
             "pytest>=7.0.0",
             "pytest-cov>=4.0.0",
+            "pytest-timeout>=2.1.0",
             "black>=23.0.0",
             "flake8>=6.0.0",
             "mypy>=1.0.0",
+            "isort>=5.12.0",
         ],
         "notebook": [
             "jupyter>=1.0.0",
-            "ipython>=7.0.0",
+            "ipython>=8.0.0",
+            "ipykernel>=6.0.0",
+            "notebook>=7.0.0",
         ],
     },
     entry_points={
