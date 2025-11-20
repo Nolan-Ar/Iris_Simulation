@@ -2058,11 +2058,14 @@ class IRISEconomy:
                     business_masse_salariale_total += masse_salariale_U
                     V_total_actuel += V_genere_brut  # Met à jour le total pour le prochain
 
-                    # CORRECTION E: CRÉER D à 100% (conservation thermodynamique)
-                    # PRINCIPE FONDAMENTAL: Quand V est créé, D doit être créé à l'identique
-                    # Ancien code: seulement 20-50% → r s'effondrait
-                    # Nouveau code: 100% → r reste stable autour de 1
-                    self.rad.D_contractuelle += V_genere_brut * 1.0  # 100% !
+                    # CORRECTION E (FIX): CRÉER D seulement sur le PATRIMOINE V créé
+                    # PRINCIPE THERMODYNAMIQUE: θ = D / V_on
+                    # - V_operationnel (60%) devient du PATRIMOINE → entre dans V_on → crée D
+                    # - masse_salariale_U (40%) devient de la LIQUIDITÉ U → N'entre PAS dans V_on → ne crée PAS D_contractuelle
+                    # Si on créait D sur 100%, D croîtrait plus vite que V_on → θ divergerait
+                    # ANCIEN (bug): D_contractuelle += V_genere_brut (100%)
+                    # NOUVEAU (correct): D_contractuelle += V_operationnel (60% seulement)
+                    self.rad.D_contractuelle += V_operationnel * 1.0  # 100% du V créé, pas du U
 
             # Distribution de la masse salariale des entreprises (en U)
             # IMPORTANT : Ce sont des SALAIRES (revenus productifs), pas du RU.
