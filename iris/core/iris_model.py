@@ -755,6 +755,8 @@ class IRISEconomy:
                  enable_catastrophes: bool = True,
                  enable_price_discovery: bool = True,
                  enable_dynamic_business: bool = True,
+                 enable_business_combustion: bool = True,
+                 enable_chambre_relance: bool = True,
                  time_scale: Optional[str] = None,  # DEPRECATED: 1 step = 1 mois (fixe)
                  max_population: int = 10000,
                  initial_total_wealth_V: Optional[float] = None,
@@ -778,6 +780,8 @@ class IRISEconomy:
             enable_catastrophes: Active les catastrophes aléatoires
             enable_price_discovery: Active le mécanisme de prix explicites
             enable_dynamic_business: Active les entreprises dynamiques (créations/faillites)
+            enable_business_combustion: Active la combustion des entreprises (S+U→V, distribution 40/60)
+            enable_chambre_relance: Active la Chambre de Relance (redistribution pool orphelins)
             time_scale: DEPRECATED - Ignoré, l'échelle est toujours en mois (1 step = 1 mois)
             max_population: Population maximale (0 = illimité, défaut: 10000)
             initial_total_wealth_V: Richesse totale initiale à répartir entre agents
@@ -819,6 +823,8 @@ class IRISEconomy:
         self.enable_catastrophes = enable_catastrophes
         self.enable_price_discovery = enable_price_discovery
         self.enable_dynamic_business = enable_dynamic_business
+        self.enable_business_combustion = enable_business_combustion
+        self.enable_chambre_relance = enable_chambre_relance
         self.max_population = max_population
 
         # Calcul automatique de initial_total_wealth_V si non spécifié
@@ -1915,54 +1921,58 @@ class IRISEconomy:
         # 4a. COMBUSTION entreprises : S + U → V, puis distribution ORGANIQUE 40/60 (chaque step = 1 fois/mois)
         # ALIGNEMENT THÉORIQUE : 40% → masse salariale, 60% → trésorerie
         # NOUVEAU : Application du coefficient η (ETA) de rendement
+        # CONDITIONNÉ PAR enable_business_combustion
         business_masse_salariale_total = 0.0
         business_NFT_created_count = 0
-        # Calcule le coefficient η (ETA) de rendement de la combustion
-        # η module la productivité selon la tension thermométrique θ
-        # Surchauffe (θ > 1) → η < 1 (freine production)
-        # Sous-régime (θ < 1) → η > 1 (stimule production)
-        eta = self.compute_eta()
 
-        # Simule la COMBUSTION (S + U → V) pour les entreprises
-        for business_id in list(self.registre_entreprises.comptes.keys()):
-            compte = self.registre_entreprises.get_compte(business_id)
-            if compte:
-                # COMBUSTION BRUTE génère du V proportionnel à V_entreprise
-                # Taux de génération brut mensuel : 0.5% du V_entreprise par mois ≈ 6% annuel
-                V_genere_brut = compte.V_entreprise * 0.005
+        if self.enable_business_combustion:
+            # Calcule le coefficient η (ETA) de rendement de la combustion
+            # η module la productivité selon la tension thermométrique θ
+            # Surchauffe (θ > 1) → η < 1 (freine production)
+            # Sous-régime (θ < 1) → η > 1 (stimule production)
+            eta = self.compute_eta()
 
-                # APPLICATION DU COEFFICIENT η (RÉGULATION THERMODYNAMIQUE)
-                # V_effectif = V_brut × η
-                # Ce mécanisme permet au système de s'autoréguler :
-                # - En surchauffe : η < 1 → réduit la création de V → refroidit
-                # - En sous-régime : η > 1 → augmente la création de V → réchauffe
-                V_genere_effectif = V_genere_brut * eta
+            # Simule la COMBUSTION (S + U → V) pour les entreprises
+            for business_id in list(self.registre_entreprises.comptes.keys()):
+                compte = self.registre_entreprises.get_compte(business_id)
+                if compte:
+                    # COMBUSTION BRUTE génère du V proportionnel à V_entreprise
+                    # Taux de génération brut mensuel : 0.5% du V_entreprise par mois ≈ 6% annuel
+                    V_genere_brut = compte.V_entreprise * 0.005
 
-                # Distribue le V EFFECTIF généré avec schéma ORGANIQUE 40/60
-                # 40% du V → Masse salariale en U (rémunérations collaborateurs)
-                # 60% du V → Trésorerie (V_operationnel)
-                masse_salariale_en_U, nft_genere = self.registre_entreprises.process_V_genere(
-                    business_id, V_genere_effectif, self.time
-                )
+                    # APPLICATION DU COEFFICIENT η (RÉGULATION THERMODYNAMIQUE)
+                    # V_effectif = V_brut × η
+                    # Ce mécanisme permet au système de s'autoréguler :
+                    # - En surchauffe : η < 1 → réduit la création de V → refroidit
+                    # - En sous-régime : η > 1 → augmente la création de V → réchauffe
+                    V_genere_effectif = V_genere_brut * eta
 
-                business_masse_salariale_total += masse_salariale_en_U
-                if nft_genere:
-                    business_NFT_created_count += 1
-                    # Impact sur D_contractuelle (nouveau titre productif)
-                    self.rad.D_contractuelle += nft_genere.valeur_convertie * 0.5
+                    # Distribue le V EFFECTIF généré avec schéma ORGANIQUE 40/60
+                    # 40% du V → Masse salariale en U (rémunérations collaborateurs)
+                    # 60% du V → Trésorerie (V_operationnel)
+                    masse_salariale_en_U, nft_genere = self.registre_entreprises.process_V_genere(
+                        business_id, V_genere_effectif, self.time
+                    )
 
-        # Distribution de la masse salariale des entreprises (en U)
-        # IMPORTANT : Ce sont des SALAIRES (revenus productifs), pas du RU.
-        # Dans cette version simplifiée, on redistribue aux agents comme proxy.
-        if business_masse_salariale_total > 0 and len(self.agents) > 0:
-            montant_U_par_agent = business_masse_salariale_total / len(self.agents)
-            for agent in self.agents.values():
-                agent.U_balance += montant_U_par_agent
-            # Impact sur D_regulatrice (flux de rémunérations)
-            self.rad.D_regulatrice += business_masse_salariale_total * 0.2
+                    business_masse_salariale_total += masse_salariale_en_U
+                    if nft_genere:
+                        business_NFT_created_count += 1
+                        # Impact sur D_contractuelle (nouveau titre productif)
+                        self.rad.D_contractuelle += nft_genere.valeur_convertie * 0.5
+
+            # Distribution de la masse salariale des entreprises (en U)
+            # IMPORTANT : Ce sont des SALAIRES (revenus productifs), pas du RU.
+            # Dans cette version simplifiée, on redistribue aux agents comme proxy.
+            if business_masse_salariale_total > 0 and len(self.agents) > 0:
+                montant_U_par_agent = business_masse_salariale_total / len(self.agents)
+                for agent in self.agents.values():
+                    agent.U_balance += montant_U_par_agent
+                # Impact sur D_regulatrice (flux de rémunérations)
+                self.rad.D_regulatrice += business_masse_salariale_total * 0.2
 
         # 4b. Redistribution Chambre de Relance (tous les 12 steps = 1 fois/an)
-        if self.time % STEPS_PER_YEAR == 0 and len(self.agents) > 0:
+        # CONDITIONNÉ PAR enable_chambre_relance
+        if self.enable_chambre_relance and self.time % STEPS_PER_YEAR == 0 and len(self.agents) > 0:
             montant_RU_CR, delta_D_CR, invest, gov = self.chambre_relance.redistribute_pool(
                 cycle=self.time,
                 nb_beneficiaires_RU=len(self.agents),

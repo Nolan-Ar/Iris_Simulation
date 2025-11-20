@@ -184,6 +184,63 @@ economy.simulate(steps=10 * STEPS_PER_YEAR)  # 120 steps
 |-------------------|---------------|------------------------|-------------------|
 | **G** (Gini) | Coefficient de Gini (0 = égalité, 1 = inégalité max) | `gini_coefficient()` | `iris_model.py::IRISEconomy.gini_coefficient()` |
 
+## Configuration des Modules (Flags Enable/Disable)
+
+IRIS permet de désactiver sélectivement les modules pour simplifier les simulations ou isoler les mécanismes de régulation.
+
+### Flags de Configuration
+
+| Flag | Par défaut | Description | Désactive |
+|------|-----------|-------------|-----------|
+| `enable_demographics` | `True` | Active la démographie | Naissances, décès, vieillissement, héritage |
+| `enable_catastrophes` | `True` | Active les catastrophes | Chocs aléatoires (tremblements de terre, crises, etc.) |
+| `enable_price_discovery` | `True` | Active les prix dynamiques | Mécanisme de prix explicites, inflation |
+| `enable_dynamic_business` | `True` | Active entreprises dynamiques | Créations/faillites d'entreprises |
+| `enable_business_combustion` | `True` | Active combustion entreprises | Production S+U→V, distribution 40/60 |
+| `enable_chambre_relance` | `True` | Active Chambre de Relance | Redistribution pool orphelins |
+
+### Mode "Regulation Only" (Pour Illustration Théorique)
+
+**Objectif** : Illustrer uniquement les mécanismes de régulation contracyclique pour un chapitre de thèse, sans la complexité des modules annexes.
+
+**Fichier** : `iris_scenarios.py::ScenarioRunner.run_regulation_only()`
+
+**Configuration** :
+```python
+economy = IRISEconomy(
+    initial_agents=100,
+    enable_demographics=False,        # ❌ Pas de naissances/décès
+    enable_catastrophes=False,        # ❌ Pas de chocs aléatoires
+    enable_price_discovery=False,     # ❌ Pas de prix dynamiques
+    enable_dynamic_business=False,    # ❌ Pas de créations/faillites
+    enable_business_combustion=False, # ❌ Pas de production entreprise
+    enable_chambre_relance=False,     # ❌ Pas de redistribution CR
+)
+```
+
+**Modules Actifs (uniquement)** :
+- ✅ Variables fondamentales : V, U, D
+- ✅ Thermomètre : θ = D / V_on
+- ✅ Régulateurs : κ (liquidité), η (production)
+- ✅ Revenu Universel : RU = κ × (V_on × τ) / N
+- ✅ Capteurs : r_ic (inflation), ν_eff (vélocité)
+- ✅ Conversions V↔U
+- ✅ Transactions U entre agents
+- ✅ Couches RAD (C1, C2, C3)
+
+**Mécanismes Démontrés** :
+1. Régulation contracyclique par κ
+2. Maintien de θ proche de 1 (équilibre thermodynamique)
+3. Stabilisation sans modules externes
+
+**Usage** :
+```python
+from iris.core.iris_scenarios import ScenarioRunner
+
+runner = ScenarioRunner(n_agents=100)
+economy = runner.run_regulation_only(steps=120)  # 10 ans = 120 mois
+```
+
 ## Notes sur les Conventions
 
 1. **Nomenclature θ (theta)** : Le thermomètre θ = D / V_on est LA métrique centrale du système IRIS. Il mesure la tension thermodynamique de l'économie.

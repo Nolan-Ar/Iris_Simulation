@@ -15,6 +15,7 @@ Scénarios implémentés :
 4. Choc d'offre (perturbation de la production)
 5. Crise systémique (combinaison de chocs)
 6. Comparaison avec système traditionnel (sans régulation)
+7. Regulation Only (mécanismes de régulation pure - pour illustration théorique)
 """
 
 import numpy as np
@@ -442,6 +443,98 @@ class ScenarioRunner:
             print(f"  Résilience : {resilience} (déviation max = {max_deviation:.4f})")
 
         print("\n" + "="*70 + "\n")
+
+    def run_regulation_only(self, steps: int = 1000) -> IRISEconomy:
+        """
+        Scénario REGULATION ONLY : Mécanismes de régulation pure
+
+        ═══════════════════════════════════════════════════════════════════════════
+        MODE "RÉGULATION PURE" - POUR ILLUSTRATION THÉORIQUE
+        ═══════════════════════════════════════════════════════════════════════════
+
+        Ce scénario désactive TOUS les modules complexes pour ne garder que :
+        - Les variables fondamentales : V_circ, D, θ (thermomètre)
+        - Les mécanismes de régulation : κ (kappa), η (eta)
+        - Le revenu universel : RU = κ × (V_on × τ) / N
+        - Les capteurs : r_ic, ν_eff
+
+        MODULES DÉSACTIVÉS :
+        - ❌ Démographie (naissances/décès)
+        - ❌ Catastrophes aléatoires
+        - ❌ Prix dynamiques
+        - ❌ Entreprises dynamiques (créations/faillites)
+        - ❌ Combustion des entreprises (S+U→V)
+        - ❌ Chambre de Relance
+
+        OBJECTIF :
+        Illustrer le mécanisme de régulation contracyclique pur pour un chapitre
+        de thèse sans la complexité des modules annexes.
+
+        Le système montre comment :
+        1. κ régule la liquidité (conversion V→U + montant RU)
+        2. θ = D/V_on mesure la tension thermodynamique
+        3. Le RAD maintient θ proche de 1 (équilibre)
+
+        Args:
+            steps: Durée de la simulation (en mois)
+
+        Returns:
+            Économie IRIS après simulation (mode régulation pure)
+        """
+        print("\n" + "="*70)
+        print("SCÉNARIO : REGULATION ONLY - Mécanismes de Régulation Pure")
+        print("="*70)
+        print("\n📌 MODE RÉGULATION PURE (pour illustration théorique)")
+        print("   Modules actifs : V, U, D, θ, κ, η, RU, r_ic, ν_eff")
+        print("   Modules désactivés : démographie, catastrophes, prix, entreprises\n")
+
+        # Création de l'économie avec TOUS les modules complexes désactivés
+        economy = IRISEconomy(
+            initial_agents=self.n_agents,
+            gold_factor=1.0,
+            universal_income_rate=0.01,
+            # ═══════════════════════════════════════════════════════════════
+            # DÉSACTIVATION DE TOUS LES MODULES COMPLEXES
+            # ═══════════════════════════════════════════════════════════════
+            enable_demographics=False,           # Pas de naissances/décès
+            enable_catastrophes=False,           # Pas de chocs aléatoires
+            enable_price_discovery=False,        # Pas de prix dynamiques
+            enable_dynamic_business=False,       # Pas de créations/faillites
+            enable_business_combustion=False,    # Pas de production entreprise
+            enable_chambre_relance=False,        # Pas de redistribution CR
+        )
+
+        print(f"Simulation de {steps} steps (mois) en mode régulation pure...")
+        economy.simulate(steps=steps, n_transactions=20)
+
+        self.results['regulation_only'] = economy.history
+
+        # Analyse des résultats
+        print(f"\n📈 Résultats (mode régulation pure) :")
+        print(f"  Thermomètre final (θ) : {economy.thermometer():.4f}")
+        print(f"  Indicateur final (I) : {economy.indicator():.4f}")
+        print(f"  Kappa final (κ) : {economy.rad.kappa:.4f}")
+        print(f"  Eta final (η) : {economy.rad.eta:.4f}")
+        print(f"  Gini final : {economy.gini_coefficient():.4f}")
+
+        # Vérification de la stabilité
+        theta_history = np.array(economy.history['thermometer'])
+        if len(theta_history) > 0:
+            theta_mean = np.mean(theta_history)
+            theta_std = np.std(theta_history)
+            print(f"\n  Stabilité du thermomètre :")
+            print(f"    Moyenne : {theta_mean:.4f}")
+            print(f"    Écart-type : {theta_std:.4f}")
+
+            # Convergence vers l'équilibre ?
+            if abs(theta_mean - 1.0) < 0.1 and theta_std < 0.2:
+                print(f"    ✓ Le système converge vers l'équilibre (θ ≈ 1)")
+            else:
+                print(f"    ⚠ Le système s'éloigne de l'équilibre")
+
+        print("\n" + "="*70 + "\n")
+
+        return economy
 
 
 def run_full_analysis(n_agents: int = 100, output_dir: str = "results",
