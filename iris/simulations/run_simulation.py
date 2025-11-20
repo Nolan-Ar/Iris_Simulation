@@ -408,10 +408,12 @@ def main():
             output_path = Path(args.output_dir)
             output_path.mkdir(parents=True, exist_ok=True)
 
-            visualizer = IRISVisualizer()
-            visualizer.plot_full_history(
+            visualizer = IRISVisualizer(output_dir=args.output_dir)
+
+            # Génère le pack complet de 4 figures pour la thèse
+            visualizer.plot_thesis_pack(
                 economy.history,
-                save_path=output_path / "iris_simulation.png"
+                scenario_name="simulation"
             )
 
             print(f"✓ Visualisations sauvegardées dans {output_path}/")
