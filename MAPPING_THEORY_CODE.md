@@ -66,7 +66,7 @@ economy.simulate(steps=10 * STEPS_PER_YEAR)  # 120 steps
 
 | Symbole Théorique | Signification | Variable/Attribut Code | Fichier + Fonction |
 |-------------------|---------------|------------------------|-------------------|
-| **κ** (kappa) | Coefficient conversion V→U (contracyclique) | `RADState.kappa` | `iris_rad.py::RADState.update_kappa()`, `iris_model.py::RADState.update_kappa()` |
+| **κ** (kappa) | **Coefficient de liquidité** (contracyclique) - Module la conversion V→U ET le montant de RU distribué | `RADState.kappa` | `iris_rad.py::RADState.update_kappa()`, `iris_model.py::RADState.update_kappa()` |
 | **η** (eta) | Coefficient rendement combustion S+U→V (contracyclique) | `RADState.eta` | `iris_rad.py::RADState`, `iris_model.py::IRISEconomy.compute_eta()` |
 | **δ_m** (delta_m) | Amortissement mensuel de D (≈ 0.104%/mois ≈ 1.25%/an) | `RADState.delta_m` | `iris_rad.py::RADState.delta_m`, `iris_rad.py::RADState.apply_amortization()` |
 | **τ** (tau) | Taux de revenu universel (1% par défaut) | `universal_income_rate` | `iris_model.py::IRISEconomy.universal_income_rate` |
@@ -76,13 +76,49 @@ economy.simulate(steps=10 * STEPS_PER_YEAR)  # 120 steps
 | **β** (kappa_beta) | Sensibilité de κ à l'indicateur I | `RADState.kappa_beta` | `iris_rad.py::RADState.compute_kappa_target()` |
 | **α** (eta_alpha) | Sensibilité de η à l'indicateur I | `RADState.eta_alpha` | `iris_rad.py::RADState.compute_eta_target()` |
 
+### Rôle Central de κ (Coefficient de Liquidité)
+
+**κ (kappa) est le régulateur PRINCIPAL de la liquidité dans IRIS**
+
+κ intervient dans DEUX mécanismes fondamentaux :
+
+1. **Conversion V→U (liquidation de patrimoine)** :
+   - Formule : `U = V × κ`
+   - Fichier : `iris_model.py::convert_V_to_U()`
+   - Ligne ~1423
+
+2. **Distribution du Revenu Universel (injection de liquidité)** :
+   - Formule : `RU_t = κ_t × (V_on × τ) / N_agents`
+   - Fichier : `iris_model.py::distribute_universal_income()`
+   - Ligne ~1558
+
+**Mécanisme Contracyclique** :
+
+| Situation | θ | κ | Effet sur liquidité |
+|-----------|---|---|-------------------|
+| **Équilibre** | θ = 1.0 | κ = 1.0 | Liquidité nominale (neutre) |
+| **Surchauffe** | θ > 1.0 | κ < 1.0 | FREINE : RU réduit + conversion V→U défavorable |
+| **Sous-régime** | θ < 1.0 | κ > 1.0 | STIMULE : RU augmenté + conversion V→U favorable |
+
+**Exemples Concrets** :
+
+- Si θ = 1.2 (surchauffe +20%) → κ ≈ 0.85 :
+  - Conversion : 100 V → 85 U (au lieu de 100 U)
+  - RU : 85 U par agent (au lieu de 100 U)
+  - **Effet : Refroidissement par réduction de liquidité**
+
+- Si θ = 0.8 (sous-régime -20%) → κ ≈ 1.15 :
+  - Conversion : 100 V → 115 U (au lieu de 100 U)
+  - RU : 115 U par agent (au lieu de 100 U)
+  - **Effet : Réchauffement par augmentation de liquidité**
+
 ## Flux et Mécanismes Économiques
 
 | Symbole Théorique | Signification | Variable/Attribut Code | Fichier + Fonction |
 |-------------------|---------------|------------------------|-------------------|
-| **RU_t** | Revenu universel au cycle t = (V_on × τ) / N_agents | `distribute_universal_income()` | `iris_model.py::IRISEconomy.distribute_universal_income()` |
+| **RU_t** | Revenu universel au cycle t = **κ_t** × (V_on × τ) / N_agents - **Modulé par κ (liquidité contracyclique)** | `distribute_universal_income()` | `iris_model.py::IRISEconomy.distribute_universal_income()` |
 | **Combustion: S+U→V** | Génération de valeur par combustion | `distribute_V_genere()` | `iris_comptes_entreprises.py::CompteEntreprise.distribute_V_genere()` |
-| **Conversion V→U** | Activation patrimoine en liquidité: U = V × κ | `convert_V_to_U()` | `iris_model.py::IRISEconomy.convert_V_to_U()` |
+| **Conversion V→U** | Activation patrimoine en liquidité: U = V × **κ** - **κ module la liquidité** | `convert_V_to_U()` | `iris_model.py::IRISEconomy.convert_V_to_U()` |
 | **Masse salariale** | 40% du V généré → U (salaires collaborateurs) | `ratio_salarial` (0.40) | `iris_comptes_entreprises.py::CompteEntreprise.distribute_V_genere()` |
 | **Trésorerie** | 60% du V généré → V_operationnel (entreprise) | `ratio_tresorerie` (0.60) | `iris_comptes_entreprises.py::CompteEntreprise.distribute_V_genere()` |
 

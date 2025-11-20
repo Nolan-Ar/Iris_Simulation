@@ -67,9 +67,10 @@ PARAMÈTRES DE RÉGULATION RAD (Contracycliques)
 ─────────────────────────────────────────────────────────────────────────────
 Symbole   │ Signification                        │ Variable Code
 ──────────┼──────────────────────────────────────┼──────────────────────────────
-κ (kappa) │ Coeff. conversion V→U [0.5, 2.0]     │ RADState.kappa, update_kappa()
-          │ • θ > 1 (surchauffe) → κ < 1 (freine)│
-          │ • θ < 1 (sous-régime) → κ > 1 (stimule)
+κ (kappa) │ Coeff. LIQUIDITÉ [0.5, 2.0]          │ RADState.kappa, update_kappa()
+          │ Module conversion V→U ET montant RU  │
+          │ • θ > 1 (surchauffe) → κ < 1 (FREINE liquidité)
+          │ • θ < 1 (sous-régime) → κ > 1 (STIMULE liquidité)
           │ • θ = 1 (équilibre) → κ = 1 (neutre) │
 η (eta)   │ Rendement combustion S+U→V [0.5, 2.0]│ RADState.eta, compute_eta()
           │ • θ > 1 → η < 1 (freine production)  │
@@ -88,9 +89,10 @@ Mécanisme            │ Formule/Description              │ Fonction Code
 ─────────────────────┼──────────────────────────────────┼──────────────────────
 Thermomètre          │ θ = D / V_on                     │ thermometer()
 Indicateur           │ I = θ - 1                        │ indicator()
-Conversion V→U       │ U = V × κ                        │ convert_V_to_U()
+Conversion V→U       │ U = V × κ (κ module liquidité)   │ convert_V_to_U()
 Combustion           │ S + U → V × η                    │ CompteEntreprise.distribute_V_genere()
-Revenu Universel     │ RU_t = (V_on × τ) / N_agents     │ distribute_universal_income()
+Revenu Universel     │ RU_t = κ × (V_on × τ) / N_agents│ distribute_universal_income()
+                     │ (κ module liquidité distribuée)  │
 Distribution 40/60   │ 40% → Masse salariale (U)        │ CompteEntreprise (ratio_salarial=0.40)
                      │ 60% → Trésorerie (V_operationnel)│ CompteEntreprise (ratio_tresorerie=0.60)
 
@@ -1411,9 +1413,15 @@ class IRISEconomy:
         if not agent or agent.V_balance < amount:
             return False  # Conversion impossible
 
+        # ═══════════════════════════════════════════════════════════════════════════
+        # κ MODULE ICI LA LIQUIDITÉ (CONVERSION V→U)
+        # ═══════════════════════════════════════════════════════════════════════════
         # CONVERSION : U = V × κ
-        # κ (kappa) est le coefficient de conversion ajusté par le RAD
-        # κ = 1.0 en équilibre, κ < 1.0 si θ > 1 (freine), κ > 1.0 si θ < 1 (stimule)
+        # κ (kappa) est le coefficient de conversion ajusté par le RAD selon θ
+        # • κ = 1.0 en équilibre (θ = 1) → conversion 1:1
+        # • κ < 1.0 si θ > 1 (surchauffe) → conversion défavorable, FREINE la liquidité
+        # • κ > 1.0 si θ < 1 (sous-régime) → conversion favorable, STIMULE la liquidité
+        # C'est le MÉCANISME CONTRACYCLIQUE : κ régule l'accès à la liquidité
         U_amount = amount * self.rad.kappa
 
         # Débite le V de l'agent
@@ -1479,7 +1487,7 @@ class IRISEconomy:
     def distribute_universal_income(self) -> None:
         """
         Distribution du revenu universel basé sur V_on (valeur en circulation)
-        AVEC CONTRAINTES DE VARIATION ET EXTINCTION
+        AVEC MODULATION κ ET CONTRAINTES DE VARIATION
 
         ALIGNEMENT THÉORIQUE (Document IRIS) :
         Le RU est calculé à partir de V_on(t-1), la valeur "vivante" en circulation,
@@ -1487,13 +1495,20 @@ class IRISEconomy:
 
         C'EST LE MÉCANISME DE JUSTICE SOCIALE D'IRIS !
 
-        Formule (conforme à la théorie) :
-        RU_t = (V_on(t-1) × τ) / N_agents
+        Formule IRIS avec modulation contracyclique :
+        RU_t = κ_t × (V_on(t-1) × τ) / N_agents
 
         Où :
+        - κ_t : Coefficient de liquidité (ajusté par le RAD selon θ)
         - V_on(t-1) : Valeur vivante en circulation au cycle précédent
-        - τ : Taux de RU (universal_income_rate, 1% par défaut)
+        - τ : Taux de RU (universal_income_rate, 1% par défaut annuel)
         - N_agents : Nombre d'agents bénéficiaires
+
+        RÔLE CENTRAL DE κ (RÉGULATION CONTRACYCLIQUE) :
+        κ module l'injection de liquidité pour maintenir l'équilibre thermodynamique :
+        • κ = 1.0 si θ = 1 (équilibre) → RU nominal
+        • κ < 1.0 si θ > 1 (surchauffe) → RU réduit, freine l'économie
+        • κ > 1.0 si θ < 1 (sous-régime) → RU augmenté, stimule l'économie
 
         CONTRAINTES DE VARIATION (stabilité) :
         1. Contrainte α_RU : |RU_t - RU_{t-1}| ≤ α_RU × RU_{t-1}
@@ -1531,10 +1546,25 @@ class IRISEconomy:
         # CONFORME À LA THÉORIE : RU basé sur V_on, pas sur V+U total
         V_on = self.get_V_on()
 
+        # ═══════════════════════════════════════════════════════════════════════════
+        # κ MODULE ICI LA LIQUIDITÉ (MONTANT DE RU DISTRIBUÉ)
+        # ═══════════════════════════════════════════════════════════════════════════
         # ÉTAPE 2 : Calcule le revenu universel théorique par agent
-        # Formule : RU = (V_on × τ) / nombre_agents
-        # τ = universal_income_rate = 1% par défaut
-        income_theoretical = V_on * self.universal_income_rate / len(self.agents)
+        # Formule IRIS avec modulation κ : RU = κ × (V_on × τ) / N_agents
+        # Où :
+        # • V_on : Valeur vivante en circulation
+        # • τ : Taux de RU (universal_income_rate = 1% par défaut, annuel)
+        # • κ : COEFFICIENT DE LIQUIDITÉ (ajusté par le RAD selon θ)
+        # • N_agents : Nombre d'agents
+        #
+        # RÔLE DE κ DANS LE RU (CONTRACYCLIQUE) :
+        # • κ = 1.0 en équilibre (θ = 1) → RU nominal
+        # • κ < 1.0 si θ > 1 (surchauffe) → RU réduit, FREINE l'injection de liquidité
+        # • κ > 1.0 si θ < 1 (sous-régime) → RU augmenté, STIMULE l'injection de liquidité
+        #
+        # C'est le MÉCANISME CONTRACYCLIQUE : κ régule l'injection de liquidité via le RU
+        # pour maintenir θ proche de 1 (équilibre thermodynamique)
+        income_theoretical = self.rad.kappa * V_on * self.universal_income_rate / len(self.agents)
 
         # ÉTAPE 3 : CONTRAINTE DE VARIATION α_RU
         # |RU_t - RU_{t-1}| ≤ α_RU × RU_{t-1}
