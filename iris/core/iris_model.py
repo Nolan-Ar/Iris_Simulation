@@ -9,16 +9,166 @@ Auteur: Arnault Nolan
 Email: arnaultnolan@gmail.com
 Date: 2025
 
-Composantes principales :
-- V (Verum) : Valeur/mémoire de valeur
-- U (Usage) : Monnaie d'usage
-- D (Dette) : Miroir thermométrique (indicateur de régulation)
-- RAD : Régulateur Automatique Décentralisé
+═══════════════════════════════════════════════════════════════════════════════
+ÉCHELLE DE TEMPS : 1 step = 1 mois
+═══════════════════════════════════════════════════════════════════════════════
+
+CONVENTION TEMPORELLE :
+- 1 step de simulation = 1 mois calendaire
+- STEPS_PER_YEAR = 12 (constante globale)
+- Toutes les fréquences sont exprimées en mois (steps)
+
+FRÉQUENCES DES MÉCANISMES :
+- Revenu Universel (RU) : distribué tous les 12 steps (1 fois/an)
+- Démographie (naissances/décès/vieillissement) : mise à jour tous les 12 steps (1 fois/an)
+- Combustion entreprises : tous les 1 step (1 fois/mois) - production continue
+- Chambre de Relance (redistribution pool) : tous les 12 steps (1 fois/an)
+- Régulation RAD C2 (profonde) : tous les 12 steps (T_period = 12)
+- Calibration automatique : tous les 50 steps (≈ 4 ans)
+- Catastrophes : probabilité annuelle (déclenchement potentiel chaque step)
+- Amortissement D : δ_m = 0.104%/mois appliqué à chaque step
+
+EXEMPLE D'UTILISATION :
+  economy = IRISEconomy(initial_agents=100)
+  economy.simulate(steps=120)  # Simule 120 mois = 10 ans
+
+═══════════════════════════════════════════════════════════════════════════════
+MAPPING THÉORIE ↔ CODE : VARIABLES, CAPTEURS ET PARAMÈTRES
+═══════════════════════════════════════════════════════════════════════════════
+
+VARIABLES D'ÉTAT MACRO
+─────────────────────────────────────────────────────────────────────────────
+Symbole   │ Signification                        │ Variable Code
+──────────┼──────────────────────────────────────┼──────────────────────────────
+V         │ Verum (patrimoine ancré)             │ Agent.V_balance
+U         │ Usage (liquidité, monnaie transaction)│ Agent.U_balance
+S         │ Service/Travail (combustion)         │ Paramètre implicite
+V_on      │ Valeur vivante en circulation        │ get_V_on()
+D         │ Dette thermométrique totale          │ RADState.total_D()
+D_mat     │ Composante matérielle de D           │ RADState.D_materielle
+D_contr   │ Composante contractuelle de D (NFT)  │ RADState.D_contractuelle
+D_conso   │ Composante consommation de D         │ RADState.D_consommation (iris_rad.py)
+D_cata    │ Composante catastrophes de D         │ RADState.D_catastrophes (iris_rad.py)
+D_serv    │ Composante services de D             │ RADState.D_services
+D_eng     │ Composante engagement de D (staking) │ RADState.D_engagement
+D_reg     │ Composante régulatrice de D (CR)     │ RADState.D_regulatrice
+
+THERMOMÈTRE ET INDICATEURS DE RÉGULATION
+─────────────────────────────────────────────────────────────────────────────
+Symbole   │ Signification                        │ Variable Code
+──────────┼──────────────────────────────────────┼──────────────────────────────
+θ (theta) │ Thermomètre économique = D / V_on    │ thermometer()
+I         │ Indicateur centré = θ - 1            │ indicator()
+r_ic      │ Taux inflation/contraction (Δθ)      │ RADState.r_ic, calculate_r_ic()
+ν_eff     │ Vélocité effective = U / V_on        │ RADState.nu_eff, calculate_nu_eff()
+τ_eng     │ Taux engagement = D_eng / D_total    │ RADState.tau_eng, calculate_tau_eng()
+
+PARAMÈTRES DE RÉGULATION RAD (Contracycliques)
+─────────────────────────────────────────────────────────────────────────────
+Symbole   │ Signification                        │ Variable Code
+──────────┼──────────────────────────────────────┼──────────────────────────────
+κ (kappa) │ Coeff. LIQUIDITÉ [0.5, 2.0]          │ RADState.kappa, update_kappa()
+          │ Module conversion V→U ET montant RU  │
+          │ • θ > 1 (surchauffe) → κ < 1 (FREINE liquidité)
+          │ • θ < 1 (sous-régime) → κ > 1 (STIMULE liquidité)
+          │ • θ = 1 (équilibre) → κ = 1 (neutre) │
+η (eta)   │ Rendement combustion S+U→V [0.5, 2.0]│ RADState.eta, compute_eta()
+          │ • θ > 1 → η < 1 (freine production)  │
+          │ • θ < 1 → η > 1 (stimule production) │
+          │ • θ = 1 → η = 1 (production normale) │
+δ_m       │ Amortissement mensuel D              │ RADState.delta_m (≈0.104%/mois)
+          │ (≈ 0.104%/mois ≈ 1.25%/an)           │ apply_amortization()
+τ (tau)   │ Taux revenu universel (1% défaut)    │ universal_income_rate
+α_RU      │ Contrainte variation max RU (10%)    │ alpha_RU
+β (beta)  │ Sensibilité κ à l'indicateur I       │ RADState.kappa_beta
+α (alpha) │ Sensibilité η à l'indicateur I       │ RADState.eta_alpha
+
+MÉCANISMES ÉCONOMIQUES FONDAMENTAUX
+─────────────────────────────────────────────────────────────────────────────
+Mécanisme            │ Formule/Description              │ Fonction Code
+─────────────────────┼──────────────────────────────────┼──────────────────────
+Thermomètre          │ θ = D / V_on                     │ thermometer()
+Indicateur           │ I = θ - 1                        │ indicator()
+Conversion V→U       │ U = V × κ (κ module liquidité)   │ convert_V_to_U()
+Combustion           │ S + U → V × η                    │ CompteEntreprise.distribute_V_genere()
+Revenu Universel     │ RU_t = κ × (V_on × τ) / N_agents│ distribute_universal_income()
+                     │ (κ module liquidité distribuée)  │
+Distribution 40/60   │ 40% → Masse salariale (U)        │ CompteEntreprise (ratio_salarial=0.40)
+                     │ 60% → Trésorerie (V_operationnel)│ CompteEntreprise (ratio_tresorerie=0.60)
+
+COUCHES DE RÉGULATION RAD (Architecture Multi-Couches)
+─────────────────────────────────────────────────────────────────────────────
+Couche │ Déclenchement           │ Action                      │ Code
+───────┼─────────────────────────┼─────────────────────────────┼─────────────
+C1     │ Chaque cycle            │ Ajuste κ et η               │ regulate() (continu)
+       │                         │ Réduction cyclique D        │
+C2     │ Tous les T=12 cycles    │ Régulation profonde         │ regulate() (si |I| > 15%)
+       │ si |I| > 15%            │ Recalibration structurelle  │
+C3     │ Si |I| > 30%            │ Rebalancement D_regulatrice │ regulate() (urgence)
+       │                         │ Intervention d'urgence      │ (limité à 5 cycles consécutifs)
+
+COMPTES ENTREPRISES (Distribution Organique)
+─────────────────────────────────────────────────────────────────────────────
+Variable          │ Signification                    │ Code
+──────────────────┼──────────────────────────────────┼──────────────────────────
+V_entreprise      │ Patrimoine de base entreprise    │ CompteEntreprise.V_entreprise
+V_operationnel    │ Trésorerie opérationnelle        │ CompteEntreprise.V_operationnel
+Seuil rétention   │ Limite V_op (20% × V_entreprise) │ CompteEntreprise.seuil_retention
+NFT_financier     │ Titre productif (excédent V)     │ NFTFinancier
+Masse salariale   │ 40% V généré → U (salaires)      │ ratio_salarial (0.40)
+Trésorerie        │ 60% V généré → V_operationnel    │ ratio_tresorerie (0.60)
+
+DÉMOGRAPHIE ET POPULATION
+─────────────────────────────────────────────────────────────────────────────
+Variable          │ Signification                    │ Code
+──────────────────┼──────────────────────────────────┼──────────────────────────
+N_agents          │ Nombre d'agents (population)     │ len(agents)
+Âge moyen         │ Âge moyen de la population       │ Demographics.get_statistics()
+Taux natalité     │ Naissances annuelles (4.14%)     │ Demographics.birth_rate
+Espérance de vie  │ Espérance de vie (80 ans)        │ Demographics.life_expectancy
+D_conso/an/pers   │ D consommation annuelle/personne │ Demographics.consumption_D_per_year
+
+ORACLE D'INITIALISATION
+─────────────────────────────────────────────────────────────────────────────
+Variable          │ Signification                    │ Code
+──────────────────┼──────────────────────────────────┼──────────────────────────
+φ_or (phi_or)     │ Facteur or de zone               │ Oracle.phi_or
+V_0               │ Verum initial = valeur × auth    │ Asset.V_initial
+D_0               │ Miroir initial = V_0             │ Asset.D_initial
+NFT fondateur     │ Preuve crypto existence unique   │ Asset.nft_hash
+auth_factor       │ Facteur authentification         │ Asset.auth_factor (1.0 = officiel)
+
+═══════════════════════════════════════════════════════════════════════════════
+PRINCIPES THÉORIQUES FONDAMENTAUX
+═══════════════════════════════════════════════════════════════════════════════
+
+1. ÉQUILIBRE INITIAL : ΣV₀ = ΣD₀ (vérifié dans _verify_initial_balance())
+
+2. THERMOMÈTRE θ = D / V_on :
+   - θ = 1.0 : Équilibre parfait (cible)
+   - θ > 1.0 : Surchauffe (excès de demande)
+   - θ < 1.0 : Sous-régime (excès d'offre)
+
+3. RÉGULATION CONTRACYCLIQUE :
+   - Surchauffe (θ > 1) → κ ↓, η ↓ (freinent conversion et production)
+   - Sous-régime (θ < 1) → κ ↑, η ↑ (stimulent conversion et production)
+   - Équilibre (θ = 1) → κ = 1, η = 1 (neutre)
+
+4. REVENU UNIVERSEL : RU basé sur V_on (valeur vivante), avec contrainte α_RU
+
+5. DISTRIBUTION ORGANIQUE 40/60 : Entreprises distribuent V généré selon
+   40% masse salariale (U) + 60% trésorerie (V_operationnel)
+
+6. AMORTISSEMENT : δ_m ≈ 0.104%/mois ≈ 1.25%/an (appliqué à toutes composantes D)
+
+═══════════════════════════════════════════════════════════════════════════════
 
 Références théoriques :
 - Cybernétique : Wiener, Ashby, Beer
 - Thermodynamique : Georgescu-Roegen, Ayres
 - Anthropologie économique : Graeber, Polanyi, Mauss
+
+Voir aussi : MAPPING_THEORY_CODE.md pour le mapping complet détaillé
 """
 
 import numpy as np
@@ -34,6 +184,12 @@ from .iris_comptes_entreprises import (
 )
 from .iris_prix import PriceManager, GoodType
 from .iris_entreprises import EntrepriseManager
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CONSTANTE TEMPORELLE GLOBALE
+# ═══════════════════════════════════════════════════════════════════════════════
+STEPS_PER_YEAR = 12  # 1 step = 1 mois, donc 12 steps = 1 an
 
 
 class AssetType(Enum):
@@ -599,7 +755,9 @@ class IRISEconomy:
                  enable_catastrophes: bool = True,
                  enable_price_discovery: bool = True,
                  enable_dynamic_business: bool = True,
-                 time_scale: str = "years",
+                 enable_business_combustion: bool = True,
+                 enable_chambre_relance: bool = True,
+                 time_scale: Optional[str] = None,  # DEPRECATED: 1 step = 1 mois (fixe)
                  max_population: int = 10000,
                  initial_total_wealth_V: Optional[float] = None,
                  mode_population: str = "object",
@@ -612,15 +770,19 @@ class IRISEconomy:
         Cette version unifie l'ancien iris_model.py avec iris_v2_1_model.py
         en créant une architecture modulaire configurable.
 
+        ÉCHELLE TEMPORELLE : 1 step = 1 mois (STEPS_PER_YEAR = 12)
+
         Args:
             initial_agents: Nombre d'agents initiaux (population de départ)
             gold_factor: Facteur or de zone (équivalent or local)
-            universal_income_rate: Taux de revenu universel
+            universal_income_rate: Taux de revenu universel (annuel)
             enable_demographics: Active la démographie (naissances/décès/âges)
             enable_catastrophes: Active les catastrophes aléatoires
             enable_price_discovery: Active le mécanisme de prix explicites
             enable_dynamic_business: Active les entreprises dynamiques (créations/faillites)
-            time_scale: "steps" ou "years" pour l'échelle de temps
+            enable_business_combustion: Active la combustion des entreprises (S+U→V, distribution 40/60)
+            enable_chambre_relance: Active la Chambre de Relance (redistribution pool orphelins)
+            time_scale: DEPRECATED - Ignoré, l'échelle est toujours en mois (1 step = 1 mois)
             max_population: Population maximale (0 = illimité, défaut: 10000)
             initial_total_wealth_V: Richesse totale initiale à répartir entre agents
                                     (None = calcul auto: ~5.78 V/agent, ancien défaut: 1 200 000)
@@ -646,11 +808,23 @@ class IRISEconomy:
         self.rad = RADState()
         self.gold_factor = gold_factor
         self.universal_income_rate = universal_income_rate
-        self.time_scale = time_scale
+
+        # DEPRECATED: time_scale est maintenant toujours "months" (1 step = 1 mois)
+        if time_scale is not None and time_scale != "months":
+            import warnings
+            warnings.warn(
+                f"time_scale='{time_scale}' est ignoré. L'échelle est maintenant fixée à 1 step = 1 mois.",
+                DeprecationWarning,
+                stacklevel=2
+            )
+        self.time_scale = "months"  # Fixé, toujours en mois
+
         self.enable_demographics = enable_demographics
         self.enable_catastrophes = enable_catastrophes
         self.enable_price_discovery = enable_price_discovery
         self.enable_dynamic_business = enable_dynamic_business
+        self.enable_business_combustion = enable_business_combustion
+        self.enable_chambre_relance = enable_chambre_relance
         self.max_population = max_population
 
         # Calcul automatique de initial_total_wealth_V si non spécifié
@@ -1245,9 +1419,15 @@ class IRISEconomy:
         if not agent or agent.V_balance < amount:
             return False  # Conversion impossible
 
+        # ═══════════════════════════════════════════════════════════════════════════
+        # κ MODULE ICI LA LIQUIDITÉ (CONVERSION V→U)
+        # ═══════════════════════════════════════════════════════════════════════════
         # CONVERSION : U = V × κ
-        # κ (kappa) est le coefficient de conversion ajusté par le RAD
-        # κ = 1.0 en équilibre, κ < 1.0 si θ > 1 (freine), κ > 1.0 si θ < 1 (stimule)
+        # κ (kappa) est le coefficient de conversion ajusté par le RAD selon θ
+        # • κ = 1.0 en équilibre (θ = 1) → conversion 1:1
+        # • κ < 1.0 si θ > 1 (surchauffe) → conversion défavorable, FREINE la liquidité
+        # • κ > 1.0 si θ < 1 (sous-régime) → conversion favorable, STIMULE la liquidité
+        # C'est le MÉCANISME CONTRACYCLIQUE : κ régule l'accès à la liquidité
         U_amount = amount * self.rad.kappa
 
         # Débite le V de l'agent
@@ -1313,7 +1493,7 @@ class IRISEconomy:
     def distribute_universal_income(self) -> None:
         """
         Distribution du revenu universel basé sur V_on (valeur en circulation)
-        AVEC CONTRAINTES DE VARIATION ET EXTINCTION
+        AVEC MODULATION κ ET CONTRAINTES DE VARIATION
 
         ALIGNEMENT THÉORIQUE (Document IRIS) :
         Le RU est calculé à partir de V_on(t-1), la valeur "vivante" en circulation,
@@ -1321,13 +1501,20 @@ class IRISEconomy:
 
         C'EST LE MÉCANISME DE JUSTICE SOCIALE D'IRIS !
 
-        Formule (conforme à la théorie) :
-        RU_t = (V_on(t-1) × τ) / N_agents
+        Formule IRIS avec modulation contracyclique :
+        RU_t = κ_t × (V_on(t-1) × τ) / N_agents
 
         Où :
+        - κ_t : Coefficient de liquidité (ajusté par le RAD selon θ)
         - V_on(t-1) : Valeur vivante en circulation au cycle précédent
-        - τ : Taux de RU (universal_income_rate, 1% par défaut)
+        - τ : Taux de RU (universal_income_rate, 1% par défaut annuel)
         - N_agents : Nombre d'agents bénéficiaires
+
+        RÔLE CENTRAL DE κ (RÉGULATION CONTRACYCLIQUE) :
+        κ module l'injection de liquidité pour maintenir l'équilibre thermodynamique :
+        • κ = 1.0 si θ = 1 (équilibre) → RU nominal
+        • κ < 1.0 si θ > 1 (surchauffe) → RU réduit, freine l'économie
+        • κ > 1.0 si θ < 1 (sous-régime) → RU augmenté, stimule l'économie
 
         CONTRAINTES DE VARIATION (stabilité) :
         1. Contrainte α_RU : |RU_t - RU_{t-1}| ≤ α_RU × RU_{t-1}
@@ -1365,10 +1552,25 @@ class IRISEconomy:
         # CONFORME À LA THÉORIE : RU basé sur V_on, pas sur V+U total
         V_on = self.get_V_on()
 
+        # ═══════════════════════════════════════════════════════════════════════════
+        # κ MODULE ICI LA LIQUIDITÉ (MONTANT DE RU DISTRIBUÉ)
+        # ═══════════════════════════════════════════════════════════════════════════
         # ÉTAPE 2 : Calcule le revenu universel théorique par agent
-        # Formule : RU = (V_on × τ) / nombre_agents
-        # τ = universal_income_rate = 1% par défaut
-        income_theoretical = V_on * self.universal_income_rate / len(self.agents)
+        # Formule IRIS avec modulation κ : RU = κ × (V_on × τ) / N_agents
+        # Où :
+        # • V_on : Valeur vivante en circulation
+        # • τ : Taux de RU (universal_income_rate = 1% par défaut, annuel)
+        # • κ : COEFFICIENT DE LIQUIDITÉ (ajusté par le RAD selon θ)
+        # • N_agents : Nombre d'agents
+        #
+        # RÔLE DE κ DANS LE RU (CONTRACYCLIQUE) :
+        # • κ = 1.0 en équilibre (θ = 1) → RU nominal
+        # • κ < 1.0 si θ > 1 (surchauffe) → RU réduit, FREINE l'injection de liquidité
+        # • κ > 1.0 si θ < 1 (sous-régime) → RU augmenté, STIMULE l'injection de liquidité
+        #
+        # C'est le MÉCANISME CONTRACYCLIQUE : κ régule l'injection de liquidité via le RU
+        # pour maintenir θ proche de 1 (équilibre thermodynamique)
+        income_theoretical = self.rad.kappa * V_on * self.universal_income_rate / len(self.agents)
 
         # ÉTAPE 3 : CONTRAINTE DE VARIATION α_RU
         # |RU_t - RU_{t-1}| ≤ α_RU × RU_{t-1}
@@ -1606,8 +1808,8 @@ class IRISEconomy:
         """
         Avance la simulation d'un pas de temps
 
-        Si time_scale="years", ce pas représente 1 année
-        Si time_scale="steps", ce pas représente une période abstraite
+        ÉCHELLE TEMPORELLE : 1 step = 1 mois
+        Les mécanismes à fréquence annuelle sont déclenchés tous les STEPS_PER_YEAR = 12 steps
 
         Args:
             n_transactions: Nombre de transactions à simuler
@@ -1619,14 +1821,14 @@ class IRISEconomy:
         deaths_this_step = 0
         catastrophes_this_step = 0
 
-        # 0a. Vieillissement de la population (si démographie activée)
-        if self.enable_demographics and self.time_scale == "years":
+        # 0a. Vieillissement de la population (tous les 12 steps = 1 fois/an)
+        if self.enable_demographics and self.time % STEPS_PER_YEAR == 0:
             if self.mode_population == "object":
                 self.agent_ages = self.demographics.age_population(self.agent_ages)
             # En mode vectorisé, le vieillissement est géré dans process_vectorized()
 
-        # 0b. Catastrophes aléatoires (si activées)
-        if self.enable_catastrophes and self.time_scale == "years":
+        # 0b. Catastrophes aléatoires (déclenchement potentiel chaque step, probabilité annuelle)
+        if self.enable_catastrophes and self.time % STEPS_PER_YEAR == 0:
             new_events = self.catastrophe_manager.update(
                 self.time, self.agents, self.agent_ages, self
             )
@@ -1675,8 +1877,8 @@ class IRISEconomy:
                         amount = min(from_agent.U_balance * 0.1, from_agent.U_balance * 0.5)
                         self.transaction(from_id, to_id, amount)
 
-            # 4. Distribution du revenu universel (moins fréquent)
-            if self.time % 50 == 0:
+            # 4. Distribution du revenu universel (tous les 12 steps = 1 fois/an)
+            if self.time % STEPS_PER_YEAR == 0:
                 self.distribute_universal_income()
 
         elif self.mode_population == "vectorized":
@@ -1707,8 +1909,8 @@ class IRISEconomy:
                 max_fraction=0.1
             )
 
-            # 4. Distribution du revenu universel (vectorisé)
-            if self.time % 50 == 0:
+            # 4. Distribution du revenu universel (tous les 12 steps = 1 fois/an)
+            if self.time % STEPS_PER_YEAR == 0:
                 # Applique le revenu universel à tous les agents vivants
                 ru_amount = self.universal_income_rate * self.population.total_V() / max(1, self.population.total_population())
                 self.population.apply_universal_income(ru_amount)
@@ -1716,12 +1918,14 @@ class IRISEconomy:
             # Mise à jour de la richesse
             self.population.update_wealth()
 
-        # 4a. COMBUSTION entreprises : S + U → V, puis distribution ORGANIQUE 40/60 (tous les 10 cycles)
+        # 4a. COMBUSTION entreprises : S + U → V, puis distribution ORGANIQUE 40/60 (chaque step = 1 fois/mois)
         # ALIGNEMENT THÉORIQUE : 40% → masse salariale, 60% → trésorerie
         # NOUVEAU : Application du coefficient η (ETA) de rendement
+        # CONDITIONNÉ PAR enable_business_combustion
         business_masse_salariale_total = 0.0
         business_NFT_created_count = 0
-        if self.time % 10 == 0:
+
+        if self.enable_business_combustion:
             # Calcule le coefficient η (ETA) de rendement de la combustion
             # η module la productivité selon la tension thermométrique θ
             # Surchauffe (θ > 1) → η < 1 (freine production)
@@ -1733,8 +1937,8 @@ class IRISEconomy:
                 compte = self.registre_entreprises.get_compte(business_id)
                 if compte:
                     # COMBUSTION BRUTE génère du V proportionnel à V_entreprise
-                    # Taux de génération brut : 5% du V_entreprise tous les 10 cycles
-                    V_genere_brut = compte.V_entreprise * 0.05
+                    # Taux de génération brut mensuel : 0.5% du V_entreprise par mois ≈ 6% annuel
+                    V_genere_brut = compte.V_entreprise * 0.005
 
                     # APPLICATION DU COEFFICIENT η (RÉGULATION THERMODYNAMIQUE)
                     # V_effectif = V_brut × η
@@ -1766,8 +1970,9 @@ class IRISEconomy:
                 # Impact sur D_regulatrice (flux de rémunérations)
                 self.rad.D_regulatrice += business_masse_salariale_total * 0.2
 
-        # 4b. Redistribution Chambre de Relance (tous les 50 cycles)
-        if self.time % 50 == 0 and len(self.agents) > 0:
+        # 4b. Redistribution Chambre de Relance (tous les 12 steps = 1 fois/an)
+        # CONDITIONNÉ PAR enable_chambre_relance
+        if self.enable_chambre_relance and self.time % STEPS_PER_YEAR == 0 and len(self.agents) > 0:
             montant_RU_CR, delta_D_CR, invest, gov = self.chambre_relance.redistribute_pool(
                 cycle=self.time,
                 nb_beneficiaires_RU=len(self.agents),
@@ -1785,13 +1990,11 @@ class IRISEconomy:
 
         # 5b. Amortissement global de la dette thermométrique D (conforme IRIS)
         # Document IRIS impose : δ_m = 0.001041666 par mois ≈ 0.104%/mois ≈ 1.25%/an
+        # Appliqué à chaque step (1 step = 1 mois)
         total_D_before = self.rad.total_D()
         if total_D_before > 0:
-            # Choix de l'amortissement selon l'échelle temporelle
-            if self.time_scale == "years":
-                effective_delta = 0.0125  # Amortissement annuel ~1.25%
-            else:
-                effective_delta = self.rad.delta_m  # Amortissement mensuel
+            # Amortissement mensuel : δ_m = 0.104%/mois
+            effective_delta = self.rad.delta_m
 
             # Calcul de l'amortissement
             amort = effective_delta * total_D_before
@@ -1809,8 +2012,8 @@ class IRISEconomy:
         births_this_step = 0
         deaths_this_step = 0
 
-        # 6. Démographie : décès et naissances (si activée et échelle = années)
-        if self.enable_demographics and self.time_scale == "years":
+        # 6. Démographie : décès et naissances (tous les 12 steps = 1 fois/an)
+        if self.enable_demographics and self.time % STEPS_PER_YEAR == 0:
             if self.mode_population == "object":
                 # === MODE OBJET : traitement individuel des agents ===
                 # 6a. Accumulation annuelle des biens de consommation

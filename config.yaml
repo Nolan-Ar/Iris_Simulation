@@ -1,120 +1,289 @@
 # IRIS Economic System - Configuration
 # =====================================
+# Convention temporelle : 1 step = 1 mois (STEPS_PER_YEAR = 12)
 
-# Simulation Parameters
+# =============================================================================
+# SIMULATION PARAMETERS
+# =============================================================================
+
 simulation:
-  # Population settings
+  # ---------------------------------------------------------------------------
+  # Population
+  # ---------------------------------------------------------------------------
   population:
     default_size: 1000
     min_size: 10
     max_size: 1000000
-    initial_mean_age: 36.0
-    max_age: 90.0
+    initial_mean_age: 36.0  # Âge moyen initial (années)
+    max_age: 90.0  # Âge maximal (années)
 
-  # Economic parameters
+  # ---------------------------------------------------------------------------
+  # RAD - Régulateur Automatique Décentralisé
+  # ---------------------------------------------------------------------------
+  # Système de régulation thermodynamique à 3 couches (C1, C2, C3)
+  # Voir MAPPING_THEORY_CODE.md pour détails théoriques
+  rad:
+    # κ (kappa) - Coefficient de liquidité
+    # Régule V→U et modulation du RU
+    # Contracyclique : θ>1 → κ<1 (freine), θ<1 → κ>1 (stimule)
+    kappa_min: 0.5  # κ minimum (fort freinage)
+    kappa_max: 2.0  # κ maximum (forte stimulation)
+    kappa_beta: 0.5  # Sensibilité de κ à l'écart (I - ν_target)
+    kappa_smoothing: 0.1  # Lissage temporel de κ (0=brutal, 1=très lisse)
+
+    # η (eta) - Coefficient d'efficacité de combustion
+    # Régule le rendement S+U→V
+    # Contracyclique : θ>1 → η<1 (baisse production), θ<1 → η>1 (boost)
+    eta_min: 0.5  # η minimum
+    eta_max: 2.0  # η maximum
+    eta_alpha: 0.5  # Sensibilité de η au thermomètre θ
+    eta_smoothing: 0.15  # Lissage temporel de η
+
+    # δ (delta) - Amortissement mensuel de la dette D
+    # 1 step = 1 mois → δ_m ≈ 0.104% (≈ 1.25%/an)
+    delta_m: 0.001041666  # Taux mensuel d'amortissement
+
+    # Cibles et seuils
+    nu_target_annual: 0.02  # ν_target : inflation cible annuelle (2%)
+    nu_target_monthly: 0.00165  # ν_target mensuel (≈ 2%/12)
+    theta_target: 1.0  # θ cible (équilibre D = V_on)
+    tolerance: 0.05  # Tolérance d'équilibre (±5%)
+
+    # Paramètres couches C2 et C3 (optionnel, pour versions futures)
+    enable_C2: false  # Couche 2 (régulation profonde)
+    enable_C3: false  # Couche 3 (régulation d'urgence)
+
+  # ---------------------------------------------------------------------------
+  # Économie globale
+  # ---------------------------------------------------------------------------
   economy:
-    initial_total_V: 1000000.0
-    universal_income_rate: 0.02
-    transfer_probability: 0.1
-    max_transfer_fraction: 0.1
+    initial_total_V: 1000000.0  # V total initial du système
+    universal_income_rate: 0.02  # τ : taux RU (2% de V_on distribué annuellement)
+    transfer_probability: 0.1  # Probabilité de transfert V inter-agents
+    max_transfer_fraction: 0.1  # Fraction max de V transférée
 
-  # Business settings
+  # ---------------------------------------------------------------------------
+  # Entreprises
+  # ---------------------------------------------------------------------------
   businesses:
-    enabled: true
-    initial_count: 10
-    salary_ratio: 0.40  # 40% masse salariale
-    treasury_ratio: 0.60  # 60% trésorerie
-    retention_threshold: 0.20
+    enabled: true  # Active le module entreprises
+    initial_count: 10  # Nombre d'entreprises initiales
+    salary_ratio: 0.40  # Distribution organique : 40% masse salariale
+    treasury_ratio: 0.60  # Distribution organique : 60% trésorerie
+    retention_threshold: 0.20  # Seuil de rétention V_operationnel
 
-  # Demographics
+    # Combustion d'entreprise (S + U → V)
+    combustion_enabled: true  # Active la combustion mensuelle
+    combustion_rate_monthly: 0.005  # 0.5% du V_entreprise par mois
+
+    # Dynamique (créations/faillites)
+    dynamic_enabled: true  # Active créations/faillites dynamiques
+    creation_rate: 0.05  # Taux de création annuel (5%)
+    failure_rate_base: 0.03  # Taux de faillite de base (3%)
+    profitability_threshold: 100.0  # V minimum à générer par cycle
+    cycles_before_failure: 12  # Cycles de déficit avant faillite (1 an)
+
+  # ---------------------------------------------------------------------------
+  # Démographie
+  # ---------------------------------------------------------------------------
   demographics:
-    enabled: true
-    birth_rate_base: 0.015
-    death_rate_base: 0.01
-    mortality_age_threshold: 70.0
+    enabled: true  # Active le module démographique
+    birth_rate_base: 0.015  # Taux de natalité de base (1.5%)
+    death_rate_base: 0.01  # Taux de mortalité de base (1%)
+    mortality_age_threshold: 70.0  # Âge seuil de mortalité accrue
 
+  # ---------------------------------------------------------------------------
   # Catastrophes
+  # ---------------------------------------------------------------------------
   catastrophes:
-    enabled: false
-    base_probability: 0.01
-    max_magnitude: 0.5
+    enabled: false  # Désactivé par défaut (activer pour stress tests)
+    base_probability: 0.01  # Probabilité de base par an (1%)
+    max_magnitude: 0.5  # Magnitude maximale (0.0-1.0)
+    enable_natural: true  # Catastrophes naturelles
+    enable_economic: true  # Catastrophes économiques
+    enable_political: true  # Catastrophes politiques
+    enable_technological: true  # Catastrophes technologiques
 
+  # ---------------------------------------------------------------------------
   # Oracle / NFT
+  # ---------------------------------------------------------------------------
   oracle:
-    enabled: true
-    nft_creation_threshold: 100000.0
-    equilibrium_tolerance: 0.05
+    enabled: true  # Active l'Oracle (enregistrement flux)
+    nft_creation_threshold: 100000.0  # Seuil de création NFT
+    equilibrium_tolerance: 0.05  # Tolérance d'équilibre
 
-# Simulation Execution
+  # ---------------------------------------------------------------------------
+  # Chambre de Relance
+  # ---------------------------------------------------------------------------
+  chambre_relance:
+    enabled: true  # Active la redistribution des actifs orphelins
+    redistribution_frequency: 12  # Tous les 12 steps (annuel)
+
+  # ---------------------------------------------------------------------------
+  # Dynamique des prix (Price Discovery)
+  # ---------------------------------------------------------------------------
+  price_discovery:
+    enabled: true  # Active la découverte de prix
+    goods_types: ["food", "housing", "services"]  # Types de biens
+
+# =============================================================================
+# TEMPORAL PARAMETERS
+# =============================================================================
+# Convention : 1 step = 1 mois (STEPS_PER_YEAR = 12)
+temporal:
+  steps_per_year: 12  # 1 an = 12 mois
+  universal_income_frequency: 12  # RU distribué tous les 12 steps (annuel)
+  demographics_frequency: 12  # Démographie mise à jour tous les 12 steps
+  business_combustion_frequency: 1  # Combustion chaque step (mensuel)
+  chambre_relance_frequency: 12  # Redistribution tous les 12 steps (annuel)
+
+# =============================================================================
+# EXECUTION
+# =============================================================================
 execution:
-  default_steps: 100
-  seed: null  # null = random, or specify an integer
-  log_interval: 10
-  save_history: true
+  default_steps: 100  # Nombre de steps par défaut (≈ 8.3 ans)
+  seed: null  # Graine aléatoire (null = aléatoire, ou spécifier un entier)
+  log_interval: 10  # Log tous les N steps
+  save_history: true  # Sauvegarder l'historique complet
 
-# Performance
+# =============================================================================
+# MODULE CONFIGURATION
+# =============================================================================
+# Interrupteurs globaux pour activer/désactiver des modules entiers
+modules:
+  enable_demographics: true  # Naissances/décès
+  enable_catastrophes: false  # Catastrophes (désactivé par défaut)
+  enable_businesses: true  # Système d'entreprises
+  enable_business_combustion: true  # Combustion S+U→V
+  enable_dynamic_business: true  # Créations/faillites
+  enable_chambre_relance: true  # Redistribution actifs orphelins
+  enable_price_discovery: true  # Découverte de prix
+  enable_oracle: true  # Enregistrement des flux
+
+# =============================================================================
+# PERFORMANCE
+# =============================================================================
 performance:
-  use_vectorized: true
-  multiprocessing: false
-  n_workers: 4
-  batch_size: 1000
+  use_vectorized: true  # Utiliser les opérations vectorisées
+  multiprocessing: false  # Multiprocessing (désactivé par défaut)
+  n_workers: 4  # Nombre de workers si multiprocessing activé
+  batch_size: 1000  # Taille de batch pour opérations vectorisées
 
-# Logging
+# =============================================================================
+# LOGGING
+# =============================================================================
 logging:
   level: INFO  # DEBUG, INFO, WARNING, ERROR, CRITICAL
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
   file: "iris_simulation.log"
-  console: true
-  file_enabled: true
+  console: true  # Afficher les logs dans la console
+  file_enabled: true  # Sauvegarder les logs dans un fichier
 
-# Output
+# =============================================================================
+# OUTPUT
+# =============================================================================
 output:
-  results_dir: "simulation_results"
-  plots_dir: "plots"
-  data_dir: "data"
-  export_format: "json"  # json, csv, excel
-  save_plots: true
-  plot_format: "png"  # png, svg, pdf
+  results_dir: "simulation_results"  # Répertoire des résultats
+  plots_dir: "plots"  # Répertoire des graphiques
+  data_dir: "data"  # Répertoire des données exportées
+  export_format: "json"  # Format d'export : json, csv, excel
+  save_plots: true  # Sauvegarder les graphiques
+  plot_format: "png"  # Format graphiques : png, svg, pdf
 
-# Validation
+# =============================================================================
+# VALIDATION
+# =============================================================================
 validation:
-  enabled: true
-  monte_carlo_runs: 100
-  sensitivity_analysis: true
-  statistical_tests: true
-  confidence_level: 0.95
+  enabled: true  # Activer la validation
+  monte_carlo_runs: 100  # Nombre de runs Monte Carlo
+  sensitivity_analysis: true  # Analyse de sensibilité
+  statistical_tests: true  # Tests statistiques
+  confidence_level: 0.95  # Niveau de confiance (95%)
 
-# Safety thresholds (prevent div/0, overflow, etc.)
+# =============================================================================
+# SAFETY
+# =============================================================================
+# Seuils de sécurité pour éviter div/0, overflow, etc.
 safety:
-  min_positive_value: 1e-10
-  max_value: 1e15
-  epsilon: 1e-10
-  check_nan: true
-  check_inf: true
+  min_positive_value: 1.0e-10  # Valeur positive minimale
+  max_value: 1.0e15  # Valeur maximale
+  epsilon: 1.0e-10  # Epsilon pour comparaisons flottantes
+  check_nan: true  # Vérifier les NaN
+  check_inf: true  # Vérifier les infinis
 
-# Scenario presets
+# =============================================================================
+# SCENARIO PRESETS
+# =============================================================================
+# Scénarios prédéfinis pour faciliter les tests
+# Utilisables avec : python -m iris.simulations.run_simulation --scenario baseline
 scenarios:
-  baseline:
-    name: "Baseline"
+  baseline_stable:
+    name: "Baseline Stable"
+    description: "Équilibre stable à long terme (100 ans)"
     population_size: 1000
-    steps: 100
-    catastrophes: false
+    steps: 1200  # 100 ans
+    modules:
+      enable_catastrophes: false
+      enable_demographics: true
+      enable_businesses: true
+      enable_business_combustion: true
+      enable_chambre_relance: true
+    rad:
+      kappa_beta: 0.5
+      eta_alpha: 0.5
 
-  growth:
-    name: "Economic Growth"
-    population_size: 2000
-    steps: 200
-    universal_income_rate: 0.03
-
-  crisis:
-    name: "Economic Crisis"
+  crisis_high_volatility:
+    name: "Crisis - High Volatility"
+    description: "Stress test avec catastrophes fréquentes"
     population_size: 1000
-    steps: 150
-    catastrophes: true
-    catastrophe_probability: 0.05
+    steps: 600  # 50 ans
+    modules:
+      enable_catastrophes: true
+      enable_demographics: true
+      enable_businesses: true
+    catastrophes:
+      base_probability: 0.20  # 20% au lieu de 5%
+    rad:
+      kappa_beta: 0.8  # Régulation très réactive
+      eta_alpha: 0.8
+      kappa_smoothing: 0.3
+      eta_smoothing: 0.4
+
+  no_regulation:
+    name: "No Regulation"
+    description: "Système sans régulation RAD (κ=η=1 fixe)"
+    population_size: 1000
+    steps: 1000  # ~83 ans
+    modules:
+      enable_catastrophes: false
+      enable_demographics: true
+      enable_businesses: true
+    rad:
+      # Note : dans run_no_regulation(), on force κ=η=1 à chaque step
+      kappa_beta: 0.0  # Désactive la régulation
+      eta_alpha: 0.0
+
+  regulation_only:
+    name: "Regulation Only"
+    description: "Mode régulation pure (modules complexes désactivés)"
+    population_size: 500
+    steps: 500  # ~42 ans
+    modules:
+      enable_catastrophes: false
+      enable_demographics: false
+      enable_businesses: false
+      enable_business_combustion: false
+      enable_dynamic_business: false
+    rad:
+      kappa_beta: 0.5
+      eta_alpha: 0.5
 
   large_scale:
     name: "Large Scale"
+    description: "Grande échelle avec optimisations"
     population_size: 100000
-    steps: 500
-    use_vectorized: true
+    steps: 500  # ~42 ans
+    performance:
+      use_vectorized: true
+      multiprocessing: true
+      n_workers: 8
