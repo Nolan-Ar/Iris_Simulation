@@ -366,22 +366,35 @@ class RADState:
     # Amortissement global de la dette thermométrique D (conforme document IRIS)
     delta_m: float = 0.001041666  # Amortissement mensuel ≈ 0.104%/mois ≈ 1.25%/an
 
-    # NOUVEAUX PARAMÈTRES CONFIGURABLES pour η (ETA) et κ (KAPPA)
-    # Bornes de η (rendement combustion S+U→V) - CONFORMES DOCUMENT IRIS [0.5 ; 2.0]
-    eta_min: float = 0.5  # Rendement minimum (50%) en cas de surchauffe extrême
-    eta_max: float = 2.0  # Rendement maximum (200%) en cas de sous-production extrême
-    eta_alpha: float = 0.5  # Sensibilité de η à l'indicateur I (formule linéaire)
-    eta_gamma: float = 0.5  # Coefficient pour formule alternative η = 1 + γ(1-θ)
-    eta_beta: float = 1.0  # Coefficient pour formule alternative η = 1/(1+β|I|)
+    # CORRECTION C: PARAMÈTRES η (ETA) et κ (KAPPA) AVEC BORNES STRICTES [0.7, 1.3]
+    # Bornes de η (rendement combustion S+U→V) - CORRECTION C
+    eta_min: float = 0.7  # Rendement minimum (70%) - borne stricte
+    eta_max: float = 1.3  # Rendement maximum (130%) - borne stricte
     eta_smoothing: float = 0.15  # Facteur de lissage EMA pour η (évite oscillations)
-    eta_formula: str = "linear"  # Type de formule : "linear", "inverse", "offset"
 
-    # Bornes de κ (conversion V→U) - CONFORMES DOCUMENT IRIS [0.5 ; 2.0]
-    kappa_min: float = 0.5  # Conversion minimum (50%) en surchauffe
-    kappa_max: float = 2.0  # Conversion maximum (200%) en sous-régime
-    kappa_beta: float = 0.5  # Sensibilité de κ à l'indicateur I
+    # Bornes de κ (conversion V→U) - CORRECTION C
+    kappa_min: float = 0.7  # Conversion minimum (70%) - borne stricte
+    kappa_max: float = 1.3  # Conversion maximum (130%) - borne stricte
     kappa_smoothing: float = 0.1  # Facteur de lissage EMA pour κ
-    kappa_formula: str = "linear"  # Type de formule (miroir de η)
+
+    # CORRECTION A: SYSTÈME TRI-CAPTEUR (THÉORIE §3.3.1)
+    # Cibles des capteurs
+    nu_target: float = 0.20  # Cible vitesse circulation (20%)
+    tau_target: float = 0.35  # Cible taux engagement (35%)
+
+    # Coefficients tri-capteur pour Δη (THÉORIE §3.3.1)
+    alpha_eta: float = 0.3  # Poids thermomètre dans Δη
+    beta_eta: float = 0.4  # Poids vitesse dans Δη
+    gamma_eta: float = 0.2  # Poids engagement dans Δη
+
+    # Coefficients tri-capteur pour Δκ (THÉORIE §3.3.1)
+    alpha_kappa: float = 0.4  # Poids vitesse dans Δκ
+    beta_kappa: float = 0.3  # Poids engagement dans Δκ
+    gamma_kappa: float = 0.2  # Poids thermomètre dans Δκ
+
+    # Contraintes de variation (THÉORIE §3.3.1)
+    max_delta_eta: float = 0.15  # |Δη| ≤ 0.15 (15% max par cycle)
+    max_delta_kappa: float = 0.15  # |Δκ| ≤ 0.15 (15% max par cycle)
 
     # Capteurs de régulation (Phase C)
     r_ic: float = 0.0  # Taux inflation/contraction (variation θ)
@@ -420,105 +433,139 @@ class RADState:
         return (self.D_materielle + self.D_services + self.D_contractuelle +
                 self.D_engagement + self.D_regulatrice)
 
-    def compute_kappa_target(self, indicator: float, thermometer: float = 1.0) -> float:
+    def compute_delta_kappa(self, r_t: float, nu_eff: float, tau_eng: float) -> float:
         """
-        Calcule la valeur CIBLE de κ (kappa) en fonction de l'indicateur I
+        CORRECTION A: Calcule la VARIATION Δκ selon le système tri-capteur
 
-        ALIGNEMENT THÉORIQUE (Document IRIS) :
-        κ est le coefficient de régulation thermodynamique qui ajuste la conversion V→U.
-        Il doit répondre à la tension économique mesurée par I = θ - 1.
+        FORMULE TRI-CAPTEUR (THÉORIE §3.3.1):
+        Δκ_t = α_κ × (ν_target - ν) - β_κ × (τ_eng - τ_target) + γ_κ × (1 - r)
 
-        Principe CONTRACYCLIQUE :
-        - I > 0 (θ > 1, surchauffe) → κ < 1 → freine conversion V→U
-        - I < 0 (θ < 1, sous-régime) → κ > 1 → stimule conversion V→U
-        - I = 0 (θ = 1, équilibre) → κ = 1 → neutre
-
-        FORMULES DISPONIBLES (miroir de η) :
-        1. "linear" : κ = 1.0 - β × I (défaut, simple et stable)
-        2. "inverse" : κ = 1.0 / (1.0 + β × |I|) (atténuation progressive)
-        3. "offset" : κ = 1.0 + γ × (θ - 1) (équivalent à linear)
+        où:
+        - α_κ = 0.4 : poids de la vitesse de circulation
+        - β_κ = 0.3 : poids de l'engagement
+        - γ_κ = 0.2 : poids du thermomètre
+        - ν_target = 0.20 : cible vitesse (20%)
+        - τ_target = 0.35 : cible engagement (35%)
 
         Args:
-            indicator: Indicateur centré I = θ - 1
-            thermometer: Thermomètre θ (pour formule offset)
+            r_t: Thermomètre (r = D/V_on, cible = 1.0)
+            nu_eff: Vélocité effective (U/V_on)
+            tau_eng: Taux d'engagement (D_eng/D_total)
 
         Returns:
-            Valeur cible de κ (bornée dans [kappa_min, kappa_max])
+            Variation Δκ (bornée dans [-max_delta_kappa, +max_delta_kappa])
         """
-        # Choix de la formule selon configuration
-        if self.kappa_formula == "linear":
-            # Formule linéaire : κ = 1 - β×I
-            # ATTENTION : signe inversé car on veut κ > 1 quand θ < 1 (I < 0)
-            kappa_raw = 1.0 - self.kappa_beta * indicator
+        # Contribution de la vitesse de circulation
+        contrib_vitesse = self.alpha_kappa * (self.nu_target - nu_eff)
 
-        elif self.kappa_formula == "inverse":
-            # Formule inverse : κ = 1 / (1 + β×|I|)
-            # Atténuation douce, jamais en dehors de [0.5, 2.0]
-            kappa_raw = 1.0 / (1.0 + self.kappa_beta * abs(indicator))
-            # Ajustement contracyclique : inverse le sens si I < 0
-            if indicator < 0:
-                kappa_raw = 2.0 - kappa_raw  # Miroir autour de 1.0
+        # Contribution de l'engagement (signe négatif)
+        contrib_engagement = -self.beta_kappa * (tau_eng - self.tau_target)
 
-        elif self.kappa_formula == "offset":
-            # Formule offset : κ = 1 + γ×(θ - 1) = 1 + γ×I
-            # Équivalent à linear avec signe différent
-            kappa_raw = 1.0 - self.kappa_beta * indicator
+        # Contribution du thermomètre
+        contrib_thermo = self.gamma_kappa * (1.0 - r_t)
 
-        else:
-            # Par défaut : formule linéaire
-            kappa_raw = 1.0 - self.kappa_beta * indicator
+        # Variation totale
+        delta_kappa = contrib_vitesse + contrib_engagement + contrib_thermo
 
-        # Application des bornes configurables
-        kappa_target = max(self.kappa_min, min(self.kappa_max, kappa_raw))
+        # Contrainte de variation maximale
+        delta_kappa = np.clip(delta_kappa, -self.max_delta_kappa, self.max_delta_kappa)
 
-        return kappa_target
+        return float(delta_kappa)
 
-    def update_kappa(self, thermometer: float, target: float = 1.0) -> None:
+    def update_kappa(self, r_t: float, nu_eff: float, tau_eng: float) -> None:
         """
-        Mise à jour LISSÉE du coefficient κ (kappa) selon la tension thermométrique
+        CORRECTION A: Mise à jour κ (kappa) avec système tri-capteur
 
-        AMÉLIORATION v2.1 :
-        - Utilise compute_kappa_target() pour calculer la cible
-        - Applique un LISSAGE TEMPOREL configurable pour éviter oscillations brutales
-        - Converge progressivement vers la cible (smoothing EMA)
-        - Paramètres configurables (kappa_smoothing)
+        Utilise la formule tri-capteur pour calculer Δκ, puis applique la variation
+        avec contraintes de bornes.
 
-        Principe CONTRACYCLIQUE (stabilisateur automatique) :
-        - Si θ > 1 (excès de demande) → κ diminue → ralentit conversion V→U
-        - Si θ < 1 (déficit de demande) → κ augmente → accélère conversion V→U
-
-        Formule de lissage exponentiel (EMA) :
-        κ(t+1) = (1 - α) × κ(t) + α × κ_target
-        avec α = kappa_smoothing (facteur de lissage configurable)
-
-        Limites : κ ∈ [kappa_min, kappa_max] pour éviter les divergences
+        Formule : Δκ_t = α_κ×(ν_target-ν) - β_κ×(τ_eng-τ_target) + γ_κ×(1-r)
 
         Args:
-            thermometer: Thermomètre actuel θ
-            target: Cible du thermomètre (par défaut 1.0)
+            r_t: Thermomètre (r = D/V_on, cible = 1.0)
+            nu_eff: Vélocité effective (U/V_on, cible = 0.20)
+            tau_eng: Taux d'engagement (D_eng/D_total, cible = 0.35)
         """
-        # Calcul de l'indicateur centré I = θ - 1
-        indicator = thermometer - target
+        # Calcul de la variation Δκ via tri-capteur
+        delta_kappa = self.compute_delta_kappa(r_t, nu_eff, tau_eng)
 
-        # Calcul de la valeur cible de κ
-        kappa_target = self.compute_kappa_target(indicator, thermometer)
+        # Application de la variation
+        self.kappa += delta_kappa
 
-        # LISSAGE TEMPOREL : Moyenne mobile exponentielle (EMA)
-        # Utilise le paramètre configurable kappa_smoothing
-        # Cela évite les oscillations brutales et stabilise la régulation
-        smoothing = self.kappa_smoothing
+        # Application des bornes strictes [0.7, 1.3]
+        self.kappa = float(np.clip(self.kappa, self.kappa_min, self.kappa_max))
 
-        # Application du lissage
-        self.kappa = (1.0 - smoothing) * self.kappa + smoothing * kappa_target
-
-        # Enregistrement dans l'historique (pour analyse et calibration)
+        # Enregistrement dans l'historique
         self.kappa_history.append(self.kappa)
-        # Garde seulement les 100 dernières valeurs
         if len(self.kappa_history) > 100:
             self.kappa_history.pop(0)
 
-        # Sécurité : application des bornes configurables
-        self.kappa = max(self.kappa_min, min(self.kappa_max, self.kappa))
+    def compute_delta_eta(self, r_t: float, nu_eff: float, tau_eng: float) -> float:
+        """
+        CORRECTION A: Calcule la VARIATION Δη selon le système tri-capteur
+
+        FORMULE TRI-CAPTEUR (THÉORIE §3.3.1):
+        Δη_t = α_η × (1 - r) + β_η × (ν_target - ν) - γ_η × (τ_eng - τ_target)
+
+        où:
+        - α_η = 0.3 : poids du thermomètre
+        - β_η = 0.4 : poids de la vitesse
+        - γ_η = 0.2 : poids de l'engagement
+        - ν_target = 0.20 : cible vitesse (20%)
+        - τ_target = 0.35 : cible engagement (35%)
+
+        Args:
+            r_t: Thermomètre (r = D/V_on, cible = 1.0)
+            nu_eff: Vélocité effective (U/V_on)
+            tau_eng: Taux d'engagement (D_eng/D_total)
+
+        Returns:
+            Variation Δη (bornée dans [-max_delta_eta, +max_delta_eta])
+        """
+        # Contribution du thermomètre
+        contrib_thermo = self.alpha_eta * (1.0 - r_t)
+
+        # Contribution de la vitesse
+        contrib_vitesse = self.beta_eta * (self.nu_target - nu_eff)
+
+        # Contribution de l'engagement (signe négatif)
+        contrib_engagement = -self.gamma_eta * (tau_eng - self.tau_target)
+
+        # Variation totale
+        delta_eta = contrib_thermo + contrib_vitesse + contrib_engagement
+
+        # Contrainte de variation maximale
+        delta_eta = np.clip(delta_eta, -self.max_delta_eta, self.max_delta_eta)
+
+        return float(delta_eta)
+
+    def update_eta(self, r_t: float, nu_eff: float, tau_eng: float) -> None:
+        """
+        CORRECTION A: Mise à jour η (eta) avec système tri-capteur
+
+        Utilise la formule tri-capteur pour calculer Δη, puis applique la variation
+        avec contraintes de bornes.
+
+        Formule : Δη_t = α_η×(1-r) + β_η×(ν_target-ν) - γ_η×(τ_eng-τ_target)
+
+        Args:
+            r_t: Thermomètre (r = D/V_on, cible = 1.0)
+            nu_eff: Vélocité effective (U/V_on, cible = 0.20)
+            tau_eng: Taux d'engagement (D_eng/D_total, cible = 0.35)
+        """
+        # Calcul de la variation Δη via tri-capteur
+        delta_eta = self.compute_delta_eta(r_t, nu_eff, tau_eng)
+
+        # Application de la variation
+        self.eta += delta_eta
+
+        # Application des bornes strictes [0.7, 1.3]
+        self.eta = float(np.clip(self.eta, self.eta_min, self.eta_max))
+
+        # Enregistrement dans l'historique
+        self.eta_history.append(self.eta)
+        if len(self.eta_history) > 100:
+            self.eta_history.pop(0)
 
     def calculate_r_ic(self, current_theta: float) -> float:
         """
@@ -906,6 +953,11 @@ class IRISEconomy:
         # Paramètres revenu universel contraint
         self.last_RU_per_agent = 0.0  # Dernier RU distribué par agent
         self.alpha_RU = 0.1  # Contrainte variation max (10%)
+
+        # CORRECTION B: Bornes absolues RU (stabilisation)
+        # Empêchent l'explosion ou l'effondrement du RU
+        self.RU_min_absolute = 0.1    # Plancher absolu (sécurité)
+        self.RU_max_absolute = 500.0  # Plafond absolu (anti-explosion)
 
         # Initialisation avec des agents et actifs
         if self.mode_population == "object":
@@ -1580,11 +1632,15 @@ class IRISEconomy:
             max_RU = self.last_RU_per_agent + max_variation
             min_RU = self.last_RU_per_agent - max_variation
 
-            # Applique la contrainte
+            # Applique la contrainte de variation
             income_per_agent = max(min_RU, min(max_RU, income_theoretical))
         else:
-            # Premier RU : pas de contrainte
+            # Premier RU : pas de contrainte de variation
             income_per_agent = income_theoretical
+
+        # CORRECTION B: BORNES ABSOLUES (anti-explosion / anti-effondrement)
+        # Appliquées APRÈS la contrainte de variation pour garantir stabilité absolue
+        income_per_agent = max(self.RU_min_absolute, min(self.RU_max_absolute, income_per_agent))
 
         # ÉTAPE 4 : Distribue le revenu universel à TOUS les agents équitablement
         for agent in self.agents.values():
@@ -1663,16 +1719,22 @@ class IRISEconomy:
         # ═══════════════════════════════════════════════════════════════════
         # COUCHE 1 (C1) : RÉGULATION CONTINUE
         # ═══════════════════════════════════════════════════════════════════
-        # Ajustement κ (kappa) - conversion V→U
-        self.rad.update_kappa(theta)
+        # CORRECTION A: SYSTÈME TRI-CAPTEUR (r_t, ν_eff, τ_eng)
+        # Calcul des trois capteurs selon THÉORIE §3.3.1
+        r_t = theta  # Thermomètre (cible = 1.0)
+        nu_eff = self.rad.calculate_nu_eff(total_U, V_on)  # Vélocité (cible = 0.20)
+        tau_eng = self.rad.calculate_tau_eng()  # Engagement (cible = 0.35)
 
-        # Ajustement η (eta) - rendement combustion S+U→V
-        # NOUVEAU : Utilise compute_eta() basé sur l'indicateur I (tension thermométrique)
-        # - Surchauffe (θ > 1, I > 0) → η < 1 → freine production de V
-        # - Sous-régime (θ < 1, I < 0) → η > 1 → stimule production de V
-        # - Équilibre (θ = 1, I = 0) → η = 1 → production normale
-        # Cela remplace l'ancienne logique basée sur nu_eff
-        self.rad.eta = self.compute_eta()
+        # Ajustement κ (kappa) avec TRI-CAPTEUR
+        # Formule : Δκ_t = α_κ×(ν_target-ν) - β_κ×(τ_eng-τ_target) + γ_κ×(1-r)
+        self.rad.update_kappa(r_t, nu_eff, tau_eng)
+
+        # Ajustement η (eta) avec TRI-CAPTEUR
+        # Formule : Δη_t = α_η×(1-r) + β_η×(ν_target-ν) - γ_η×(τ_eng-τ_target)
+        # - Surchauffe (θ > 1) → η diminue → freine production de V
+        # - Sous-régime (θ < 1) → η augmente → stimule production de V
+        # - Équilibre (θ = 1) → η se stabilise autour de 1
+        self.rad.update_eta(r_t, nu_eff, tau_eng)
 
         # ═══════════════════════════════════════════════════════════════════
         # COUCHE 2 (C2) : RÉGULATION PROFONDE (période T=12 cycles)
@@ -1926,39 +1988,81 @@ class IRISEconomy:
         business_NFT_created_count = 0
 
         if self.enable_business_combustion:
-            # Calcule le coefficient η (ETA) de rendement de la combustion
-            # η module la productivité selon la tension thermométrique θ
-            # Surchauffe (θ > 1) → η < 1 (freine production)
-            # Sous-régime (θ < 1) → η > 1 (stimule production)
-            eta = self.compute_eta()
+            # ═════════════════════════════════════════════════════════════════════
+            # CORRECTION D+E : VRAIE COMBUSTION S+U→V avec bornes (THÉORIE §2.3.2.6)
+            # ═════════════════════════════════════════════════════════════════════
+            # CHANGEMENT MAJEUR par rapport à l'ancien code:
+            # 1. DESTRUCTION effective de S et U (conservation énergétique)
+            # 2. CRÉATION de V = η × E_t avec E_t = w_S×S_burn + w_U×U_burn
+            # 3. PLAFOND V_max basé sur la population (CORRECTION D+G)
+            # 4. CRÉATION de D à 100% (CORRECTION E, conservation thermodynamique)
 
-            # Simule la COMBUSTION (S + U → V) pour les entreprises
+            eta = self.rad.eta  # Coefficient de rendement (déjà mis à jour par regulate())
+
+            # CORRECTION D+G: V_max proportionnel à N_agents
+            # Empêche V d'exploser indéfiniment
+            V_max_per_agent = 10000.0  # V maximum par agent (ajustable)
+            V_max_total = len(self.agents) * V_max_per_agent
+
+            # V total actuel (pour vérifier le plafond)
+            V_total_actuel = sum(a.V_balance for a in self.agents.values())
+
+            # Simule la VRAIE COMBUSTION (S + U → V) pour les entreprises
             for business_id in list(self.registre_entreprises.comptes.keys()):
                 compte = self.registre_entreprises.get_compte(business_id)
                 if compte:
-                    # COMBUSTION BRUTE génère du V proportionnel à V_entreprise
-                    # Taux de génération brut mensuel : 0.5% du V_entreprise par mois ≈ 6% annuel
-                    V_genere_brut = compte.V_entreprise * 0.005
+                    # VRAIE COMBUSTION: on DÉTRUIT S et U pour CRÉER V
+                    # Pas de génération ex nihilo comme avant !
 
-                    # APPLICATION DU COEFFICIENT η (RÉGULATION THERMODYNAMIQUE)
-                    # V_effectif = V_brut × η
-                    # Ce mécanisme permet au système de s'autoréguler :
-                    # - En surchauffe : η < 1 → réduit la création de V → refroidit
-                    # - En sous-régime : η > 1 → augmente la création de V → réchauffe
-                    V_genere_effectif = V_genere_brut * eta
+                    # Stipulat (S) et Liquidité (U) disponibles
+                    S_disponible = getattr(compte, 'S_balance', 0.0)
+                    U_disponible = getattr(compte, 'U_operationnel', 0.0)
 
-                    # Distribue le V EFFECTIF généré avec schéma ORGANIQUE 40/60
-                    # 40% du V → Masse salariale en U (rémunérations collaborateurs)
-                    # 60% du V → Trésorerie (V_operationnel)
-                    masse_salariale_en_U, nft_genere = self.registre_entreprises.process_V_genere(
-                        business_id, V_genere_effectif, self.time
-                    )
+                    # Taux de combustion mensuel : 5% de min(S, U)
+                    burn_rate = 0.05
+                    combustible = min(S_disponible, U_disponible)
 
-                    business_masse_salariale_total += masse_salariale_en_U
-                    if nft_genere:
-                        business_NFT_created_count += 1
-                        # Impact sur D_contractuelle (nouveau titre productif)
-                        self.rad.D_contractuelle += nft_genere.valeur_convertie * 0.5
+                    # Quantités brûlées (pondération 60% S, 40% U)
+                    S_burn = combustible * 0.6
+                    U_burn = combustible * 0.4
+
+                    # DESTRUCTION de S et U (CONSERVATION ÉNERGÉTIQUE)
+                    if hasattr(compte, 'S_balance'):
+                        compte.S_balance -= S_burn
+                    if hasattr(compte, 'U_operationnel'):
+                        compte.U_operationnel -= U_burn
+
+                    # CRÉATION de V selon FORMULE THÉORIQUE (§2.3.2.6):
+                    # ΔV_t = η_t × Δt × E_t
+                    # avec E_t = w_S × S_burn + w_U × U_burn
+                    E_t = 0.6 * S_burn + 0.4 * U_burn
+                    V_genere_brut = eta * E_t
+
+                    # CORRECTION D: PLAFOND V_max_total
+                    # Si V_total + V_genere > V_max, on limite la génération
+                    if V_total_actuel + V_genere_brut > V_max_total:
+                        V_genere_brut = max(0.0, V_max_total - V_total_actuel)
+
+                    # Distribution ORGANIQUE 40/60
+                    # 40% → masse salariale (en U)
+                    # 60% → trésorerie (en V_operationnel)
+                    masse_salariale_U = V_genere_brut * 0.4
+                    V_operationnel = V_genere_brut * 0.6
+
+                    # Crédite la trésorerie de l'entreprise
+                    if hasattr(compte, 'V_operationnel'):
+                        compte.V_operationnel += V_operationnel
+                    else:
+                        compte.V_entreprise += V_operationnel
+
+                    business_masse_salariale_total += masse_salariale_U
+                    V_total_actuel += V_genere_brut  # Met à jour le total pour le prochain
+
+                    # CORRECTION E: CRÉER D à 100% (conservation thermodynamique)
+                    # PRINCIPE FONDAMENTAL: Quand V est créé, D doit être créé à l'identique
+                    # Ancien code: seulement 20-50% → r s'effondrait
+                    # Nouveau code: 100% → r reste stable autour de 1
+                    self.rad.D_contractuelle += V_genere_brut * 1.0  # 100% !
 
             # Distribution de la masse salariale des entreprises (en U)
             # IMPORTANT : Ce sont des SALAIRES (revenus productifs), pas du RU.
@@ -1967,8 +2071,6 @@ class IRISEconomy:
                 montant_U_par_agent = business_masse_salariale_total / len(self.agents)
                 for agent in self.agents.values():
                     agent.U_balance += montant_U_par_agent
-                # Impact sur D_regulatrice (flux de rémunérations)
-                self.rad.D_regulatrice += business_masse_salariale_total * 0.2
 
         # 4b. Redistribution Chambre de Relance (tous les 12 steps = 1 fois/an)
         # CONDITIONNÉ PAR enable_chambre_relance
@@ -1981,9 +2083,23 @@ class IRISEconomy:
             # Distribution du RU provenant de la Chambre de Relance
             for agent in self.agents.values():
                 agent.U_balance += montant_RU_CR
-            # Réduction de D global (impact déflationniste de la CR)
+
+            # CORRECTION F: Réduction de D global (impact déflationniste de la CR)
+            # La Chambre de Relance réduit TOUTES les composantes de D proportionnellement
+            # (pas seulement D_regulatrice), pour refléter la liquidation thermodynamique
             if delta_D_CR < 0:
-                self.rad.D_regulatrice += delta_D_CR
+                total_D_before_CR = self.rad.total_D()
+                if total_D_before_CR > 0:
+                    # Calcul du ratio de réduction : (D - |delta_D_CR|) / D
+                    reduction_amount = abs(delta_D_CR)
+                    ratio_CR = max(0.0, (total_D_before_CR - reduction_amount) / total_D_before_CR)
+
+                    # Application proportionnelle sur TOUTES les composantes de D
+                    self.rad.D_materielle *= ratio_CR
+                    self.rad.D_services *= ratio_CR
+                    self.rad.D_contractuelle *= ratio_CR
+                    self.rad.D_engagement *= ratio_CR
+                    self.rad.D_regulatrice *= ratio_CR
 
         # 5. Régulation automatique
         C2_activated, C3_activated = self.regulate()
@@ -2102,6 +2218,25 @@ class IRISEconomy:
                 for new_agent in new_agents:
                     self.agents[new_agent.id] = new_agent
                     self.agent_ages[new_agent.id] = 0  # Les nouveau-nés ont 0 ans
+
+                # CORRECTION G: Vérification V_max après naissances (cohérence démographique)
+                # Les nouveau-nés créent de nouveaux actifs, ce qui augmente V total
+                # On doit s'assurer que V_total ne dépasse pas V_max_total
+                if new_agents:
+                    V_max_per_agent = 10000.0
+                    V_max_total = len(self.agents) * V_max_per_agent
+                    V_total_actuel = sum(a.V_balance for a in self.agents.values())
+
+                    # Si V dépasse le plafond, réduire proportionnellement les balances des nouveau-nés
+                    if V_total_actuel > V_max_total:
+                        excess_V = V_total_actuel - V_max_total
+                        newborn_V_total = sum(a.V_balance for a in new_agents)
+
+                        if newborn_V_total > 0:
+                            # Réduction proportionnelle du patrimoine des nouveau-nés
+                            reduction_ratio = max(0.0, (newborn_V_total - excess_V) / newborn_V_total)
+                            for new_agent in new_agents:
+                                new_agent.V_balance *= reduction_ratio
 
             elif self.mode_population == "vectorized":
                 # === MODE VECTORISÉ : traitement par arrays NumPy ===
