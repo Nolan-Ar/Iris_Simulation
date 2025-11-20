@@ -9,16 +9,141 @@ Auteur: Arnault Nolan
 Email: arnaultnolan@gmail.com
 Date: 2025
 
-Composantes principales :
-- V (Verum) : Valeur/mémoire de valeur
-- U (Usage) : Monnaie d'usage
-- D (Dette) : Miroir thermométrique (indicateur de régulation)
-- RAD : Régulateur Automatique Décentralisé
+═══════════════════════════════════════════════════════════════════════════════
+MAPPING THÉORIE ↔ CODE : VARIABLES, CAPTEURS ET PARAMÈTRES
+═══════════════════════════════════════════════════════════════════════════════
+
+VARIABLES D'ÉTAT MACRO
+─────────────────────────────────────────────────────────────────────────────
+Symbole   │ Signification                        │ Variable Code
+──────────┼──────────────────────────────────────┼──────────────────────────────
+V         │ Verum (patrimoine ancré)             │ Agent.V_balance
+U         │ Usage (liquidité, monnaie transaction)│ Agent.U_balance
+S         │ Service/Travail (combustion)         │ Paramètre implicite
+V_on      │ Valeur vivante en circulation        │ get_V_on()
+D         │ Dette thermométrique totale          │ RADState.total_D()
+D_mat     │ Composante matérielle de D           │ RADState.D_materielle
+D_contr   │ Composante contractuelle de D (NFT)  │ RADState.D_contractuelle
+D_conso   │ Composante consommation de D         │ RADState.D_consommation (iris_rad.py)
+D_cata    │ Composante catastrophes de D         │ RADState.D_catastrophes (iris_rad.py)
+D_serv    │ Composante services de D             │ RADState.D_services
+D_eng     │ Composante engagement de D (staking) │ RADState.D_engagement
+D_reg     │ Composante régulatrice de D (CR)     │ RADState.D_regulatrice
+
+THERMOMÈTRE ET INDICATEURS DE RÉGULATION
+─────────────────────────────────────────────────────────────────────────────
+Symbole   │ Signification                        │ Variable Code
+──────────┼──────────────────────────────────────┼──────────────────────────────
+θ (theta) │ Thermomètre économique = D / V_on    │ thermometer()
+I         │ Indicateur centré = θ - 1            │ indicator()
+r_ic      │ Taux inflation/contraction (Δθ)      │ RADState.r_ic, calculate_r_ic()
+ν_eff     │ Vélocité effective = U / V_on        │ RADState.nu_eff, calculate_nu_eff()
+τ_eng     │ Taux engagement = D_eng / D_total    │ RADState.tau_eng, calculate_tau_eng()
+
+PARAMÈTRES DE RÉGULATION RAD (Contracycliques)
+─────────────────────────────────────────────────────────────────────────────
+Symbole   │ Signification                        │ Variable Code
+──────────┼──────────────────────────────────────┼──────────────────────────────
+κ (kappa) │ Coeff. conversion V→U [0.5, 2.0]     │ RADState.kappa, update_kappa()
+          │ • θ > 1 (surchauffe) → κ < 1 (freine)│
+          │ • θ < 1 (sous-régime) → κ > 1 (stimule)
+          │ • θ = 1 (équilibre) → κ = 1 (neutre) │
+η (eta)   │ Rendement combustion S+U→V [0.5, 2.0]│ RADState.eta, compute_eta()
+          │ • θ > 1 → η < 1 (freine production)  │
+          │ • θ < 1 → η > 1 (stimule production) │
+          │ • θ = 1 → η = 1 (production normale) │
+δ_m       │ Amortissement mensuel D              │ RADState.delta_m (≈0.104%/mois)
+          │ (≈ 0.104%/mois ≈ 1.25%/an)           │ apply_amortization()
+τ (tau)   │ Taux revenu universel (1% défaut)    │ universal_income_rate
+α_RU      │ Contrainte variation max RU (10%)    │ alpha_RU
+β (beta)  │ Sensibilité κ à l'indicateur I       │ RADState.kappa_beta
+α (alpha) │ Sensibilité η à l'indicateur I       │ RADState.eta_alpha
+
+MÉCANISMES ÉCONOMIQUES FONDAMENTAUX
+─────────────────────────────────────────────────────────────────────────────
+Mécanisme            │ Formule/Description              │ Fonction Code
+─────────────────────┼──────────────────────────────────┼──────────────────────
+Thermomètre          │ θ = D / V_on                     │ thermometer()
+Indicateur           │ I = θ - 1                        │ indicator()
+Conversion V→U       │ U = V × κ                        │ convert_V_to_U()
+Combustion           │ S + U → V × η                    │ CompteEntreprise.distribute_V_genere()
+Revenu Universel     │ RU_t = (V_on × τ) / N_agents     │ distribute_universal_income()
+Distribution 40/60   │ 40% → Masse salariale (U)        │ CompteEntreprise (ratio_salarial=0.40)
+                     │ 60% → Trésorerie (V_operationnel)│ CompteEntreprise (ratio_tresorerie=0.60)
+
+COUCHES DE RÉGULATION RAD (Architecture Multi-Couches)
+─────────────────────────────────────────────────────────────────────────────
+Couche │ Déclenchement           │ Action                      │ Code
+───────┼─────────────────────────┼─────────────────────────────┼─────────────
+C1     │ Chaque cycle            │ Ajuste κ et η               │ regulate() (continu)
+       │                         │ Réduction cyclique D        │
+C2     │ Tous les T=12 cycles    │ Régulation profonde         │ regulate() (si |I| > 15%)
+       │ si |I| > 15%            │ Recalibration structurelle  │
+C3     │ Si |I| > 30%            │ Rebalancement D_regulatrice │ regulate() (urgence)
+       │                         │ Intervention d'urgence      │ (limité à 5 cycles consécutifs)
+
+COMPTES ENTREPRISES (Distribution Organique)
+─────────────────────────────────────────────────────────────────────────────
+Variable          │ Signification                    │ Code
+──────────────────┼──────────────────────────────────┼──────────────────────────
+V_entreprise      │ Patrimoine de base entreprise    │ CompteEntreprise.V_entreprise
+V_operationnel    │ Trésorerie opérationnelle        │ CompteEntreprise.V_operationnel
+Seuil rétention   │ Limite V_op (20% × V_entreprise) │ CompteEntreprise.seuil_retention
+NFT_financier     │ Titre productif (excédent V)     │ NFTFinancier
+Masse salariale   │ 40% V généré → U (salaires)      │ ratio_salarial (0.40)
+Trésorerie        │ 60% V généré → V_operationnel    │ ratio_tresorerie (0.60)
+
+DÉMOGRAPHIE ET POPULATION
+─────────────────────────────────────────────────────────────────────────────
+Variable          │ Signification                    │ Code
+──────────────────┼──────────────────────────────────┼──────────────────────────
+N_agents          │ Nombre d'agents (population)     │ len(agents)
+Âge moyen         │ Âge moyen de la population       │ Demographics.get_statistics()
+Taux natalité     │ Naissances annuelles (4.14%)     │ Demographics.birth_rate
+Espérance de vie  │ Espérance de vie (80 ans)        │ Demographics.life_expectancy
+D_conso/an/pers   │ D consommation annuelle/personne │ Demographics.consumption_D_per_year
+
+ORACLE D'INITIALISATION
+─────────────────────────────────────────────────────────────────────────────
+Variable          │ Signification                    │ Code
+──────────────────┼──────────────────────────────────┼──────────────────────────
+φ_or (phi_or)     │ Facteur or de zone               │ Oracle.phi_or
+V_0               │ Verum initial = valeur × auth    │ Asset.V_initial
+D_0               │ Miroir initial = V_0             │ Asset.D_initial
+NFT fondateur     │ Preuve crypto existence unique   │ Asset.nft_hash
+auth_factor       │ Facteur authentification         │ Asset.auth_factor (1.0 = officiel)
+
+═══════════════════════════════════════════════════════════════════════════════
+PRINCIPES THÉORIQUES FONDAMENTAUX
+═══════════════════════════════════════════════════════════════════════════════
+
+1. ÉQUILIBRE INITIAL : ΣV₀ = ΣD₀ (vérifié dans _verify_initial_balance())
+
+2. THERMOMÈTRE θ = D / V_on :
+   - θ = 1.0 : Équilibre parfait (cible)
+   - θ > 1.0 : Surchauffe (excès de demande)
+   - θ < 1.0 : Sous-régime (excès d'offre)
+
+3. RÉGULATION CONTRACYCLIQUE :
+   - Surchauffe (θ > 1) → κ ↓, η ↓ (freinent conversion et production)
+   - Sous-régime (θ < 1) → κ ↑, η ↑ (stimulent conversion et production)
+   - Équilibre (θ = 1) → κ = 1, η = 1 (neutre)
+
+4. REVENU UNIVERSEL : RU basé sur V_on (valeur vivante), avec contrainte α_RU
+
+5. DISTRIBUTION ORGANIQUE 40/60 : Entreprises distribuent V généré selon
+   40% masse salariale (U) + 60% trésorerie (V_operationnel)
+
+6. AMORTISSEMENT : δ_m ≈ 0.104%/mois ≈ 1.25%/an (appliqué à toutes composantes D)
+
+═══════════════════════════════════════════════════════════════════════════════
 
 Références théoriques :
 - Cybernétique : Wiener, Ashby, Beer
 - Thermodynamique : Georgescu-Roegen, Ayres
 - Anthropologie économique : Graeber, Polanyi, Mauss
+
+Voir aussi : MAPPING_THEORY_CODE.md pour le mapping complet détaillé
 """
 
 import numpy as np
