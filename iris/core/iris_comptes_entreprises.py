@@ -207,8 +207,6 @@ class CompteEntreprise:
         self.S_balance: float = V_entreprise * 0.5  # Stipulat (contrats/engagements)
         self.U_operationnel: float = V_entreprise * 0.5  # Liquidité opérationnelle
 
-        print(f"DEBUG CompteEntreprise.__init__: {business_id} - V={V_entreprise:.4f}, S={self.S_balance:.4f}, U={self.U_operationnel:.4f}")
-
         # NFT financiers émis
         self.nft_financiers: Dict[str, NFTFinancier] = {}
 

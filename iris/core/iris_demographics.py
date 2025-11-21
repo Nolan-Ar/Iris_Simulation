@@ -40,7 +40,7 @@ class Demographics:
                  retirement_age: int = 65,
                  wealth_influence: bool = True,
                  max_population: int = 10000,
-                 consumption_D_per_year: float = 0.5):
+                 consumption_D_per_year: float = 0.25):
         """
         Initialise le module démographique
 
