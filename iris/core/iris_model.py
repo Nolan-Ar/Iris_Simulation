@@ -1889,15 +1889,30 @@ class IRISEconomy:
         ÉCHELLE TEMPORELLE : 1 step = 1 mois
         Les mécanismes à fréquence annuelle sont déclenchés tous les STEPS_PER_YEAR = 12 steps
 
+        PIPELINE (ÉTAPE 7 - Architecture propre) :
+        1. COMPUTE : Calculs économiques, transactions, régulation
+        2. UPDATE : Mise à jour de l'état du système
+        3. SNAPSHOT : _snapshot_state() capture l'état au temps t
+        4. INCREMENT : self.time += 1
+
         Args:
             n_transactions: Nombre de transactions à simuler
         """
+        # INCRÉMENT DU TEMPS (au début pour cohérence avec checks annuels)
         self.time += 1
 
-        # Variables de suivi démographique pour cette étape
-        births_this_step = 0
-        deaths_this_step = 0
-        catastrophes_this_step = 0
+        # Initialisation des variables de suivi pour ce cycle (ÉTAPE 7)
+        # Ces variables seront lues par _snapshot_state() à la fin du cycle
+        self._births_this_step = 0
+        self._deaths_this_step = 0
+        self._catastrophes_this_step = 0
+        self._business_masse_salariale = 0.0
+        self._business_NFT_created = 0
+        self._C2_activated = False
+        self._C3_activated = False
+        self._D_lifetime_this_step = 0.0
+        self._creations_entreprises = 0
+        self._faillites_entreprises = 0
 
         # 0a. Vieillissement de la population (tous les 12 steps = 1 fois/an)
         if self.enable_demographics and self.time % STEPS_PER_YEAR == 0:
@@ -1910,7 +1925,7 @@ class IRISEconomy:
             new_events = self.catastrophe_manager.update(
                 self.time, self.agents, self.agent_ages, self
             )
-            catastrophes_this_step = len(new_events)
+            self._catastrophes_this_step = len(new_events)
 
         # === TRANSACTIONS ÉCONOMIQUES ===
         # En mode objet : transactions individuelles
@@ -2011,8 +2026,7 @@ class IRISEconomy:
         # ALIGNEMENT THÉORIQUE : 40% → masse salariale, 60% → trésorerie
         # NOUVEAU : Application du coefficient η (ETA) de rendement
         # CONDITIONNÉ PAR enable_business_combustion
-        business_masse_salariale_total = 0.0
-        business_NFT_created_count = 0
+        # NOTE (ÉTAPE 7): business_masse_salariale_total → self._business_masse_salariale (instance var)
 
         if self.enable_business_combustion:
             # ═════════════════════════════════════════════════════════════════════
@@ -2095,7 +2109,7 @@ class IRISEconomy:
                     else:
                         compte.V_entreprise += V_operationnel
 
-                    business_masse_salariale_total += masse_salariale_U
+                    self._business_masse_salariale += masse_salariale_U
                     V_total_actuel += V_genere_brut  # Met à jour le total pour le prochain
 
                     # CORRECTION E (FIX v2): CRÉER D sur 100% de la valeur générée
@@ -2112,8 +2126,8 @@ class IRISEconomy:
             # Distribution de la masse salariale des entreprises (en U)
             # IMPORTANT : Ce sont des SALAIRES (revenus productifs), pas du RU.
             # Dans cette version simplifiée, on redistribue aux agents comme proxy.
-            if business_masse_salariale_total > 0 and len(self.agents) > 0:
-                montant_U_par_agent = business_masse_salariale_total / len(self.agents)
+            if self._business_masse_salariale > 0 and len(self.agents) > 0:
+                montant_U_par_agent = self._business_masse_salariale / len(self.agents)
                 for agent in self.agents.values():
                     agent.U_balance += montant_U_par_agent
 
@@ -2147,7 +2161,7 @@ class IRISEconomy:
                     self.rad.D_regulatrice *= ratio_CR
 
         # 5. Régulation automatique
-        C2_activated, C3_activated = self.regulate()
+        self._C2_activated, self._C3_activated = self.regulate()
 
         # 5b. Amortissement global de la dette thermométrique D (conforme IRIS)
         # Document IRIS impose : δ_m = 0.001041666 par mois ≈ 0.104%/mois ≈ 1.25%/an
@@ -2168,11 +2182,6 @@ class IRISEconomy:
             self.rad.D_engagement *= ratio
             self.rad.D_regulatrice *= ratio
 
-        # Initialize demographic tracking variables
-        D_lifetime_this_step = 0.0
-        births_this_step = 0
-        deaths_this_step = 0
-
         # 6. Démographie : décès et naissances (tous les 12 steps = 1 fois/an)
         if self.enable_demographics and self.time % STEPS_PER_YEAR == 0:
             if self.mode_population == "object":
@@ -2187,7 +2196,7 @@ class IRISEconomy:
                 deceased_ids = self.demographics.process_deaths(
                     self.agents, self.agent_ages, self.time
                 )
-                deaths_this_step = len(deceased_ids)
+                self._deaths_this_step = len(deceased_ids)
 
                 # 6c. Héritage et suppression des agents décédés
                 for deceased_id in deceased_ids:
@@ -2208,7 +2217,7 @@ class IRISEconomy:
                         if D_life > 0:
                             # On considère la consommation comme un flux de services
                             self.rad.D_services += D_life
-                            D_lifetime_this_step += D_life
+                            self._D_lifetime_this_step += D_life
 
                         # Transfert du patrimoine à un héritier OU à la Chambre de Relance
                         if len(self.agents) > 1:
@@ -2257,7 +2266,7 @@ class IRISEconomy:
                 new_agents = self.demographics.process_births(
                     self.agents, self.agent_ages, self.assets, self.time
                 )
-                births_this_step = len(new_agents)
+                self._births_this_step = len(new_agents)
 
                 # Ajout des nouveaux agents au système
                 for new_agent in new_agents:
@@ -2300,15 +2309,15 @@ class IRISEconomy:
                 # === MODE VECTORISÉ : traitement par arrays NumPy ===
                 # Toute la démographie (vieillissement, morts, naissances) en une seule passe
                 rng = np.random.default_rng(self.seed if hasattr(self, 'seed') else None)
-                births_this_step, deaths_this_step = self.demographics.process_vectorized(
+                self._births_this_step, self._deaths_this_step = self.demographics.process_vectorized(
                     self.population, self.time, rng
                 )
 
                 # En mode vectorisé, pas de D_lifetime détaillé (approximation)
-                D_lifetime_this_step = deaths_this_step * self.demographics.life_expectancy * \
+                self._D_lifetime_this_step = self._deaths_this_step * self.demographics.life_expectancy * \
                                       getattr(self.demographics, "consumption_D_per_year", 0.0)
-                if D_lifetime_this_step > 0:
-                    self.rad.D_services += D_lifetime_this_step
+                if self._D_lifetime_this_step > 0:
+                    self.rad.D_services += self._D_lifetime_this_step
 
         # 6b. Mise à jour des prix (si price_discovery activé)
         if self.enable_price_discovery and self.price_manager:
@@ -2320,15 +2329,10 @@ class IRISEconomy:
                 "drift_coeff": 0.02
             })
 
-        # 7. Enregistrement des métriques
-        self._record_metrics(births_this_step, deaths_this_step, catastrophes_this_step,
-                            business_masse_salariale=business_masse_salariale_total,
-                            business_NFT=business_NFT_created_count,
-                            C2_activated=C2_activated,
-                            C3_activated=C3_activated,
-                            D_lifetime=D_lifetime_this_step,
-                            creations_entreprises=0,
-                            faillites_entreprises=0)
+        # 7. SNAPSHOT de l'état (ÉTAPE 7 - Pipeline propre)
+        # Capture l'état au temps self.time (après toutes les mises à jour du cycle)
+        # Note : self.time a déjà été incrémenté au début de step()
+        self._snapshot_state()
 
     def _simulate_price_based_transactions(self, n_transactions: int) -> None:
         """
@@ -2418,38 +2422,35 @@ class IRISEconomy:
                     amount = min(from_agent.U_balance * 0.1, from_agent.U_balance * 0.5)
                     self.transaction(from_id, to_id, amount)
 
-    def _record_metrics(self, births: int = 0, deaths: int = 0, catastrophes: int = 0,
-                       business_masse_salariale: float = 0.0, business_NFT: int = 0,
-                       C2_activated: bool = False, C3_activated: bool = False,
-                       D_lifetime: float = 0.0,
-                       creations_entreprises: int = 0,
-                       faillites_entreprises: int = 0) -> None:
+    def _snapshot_state(self) -> None:
         """
-        Enregistre les métriques du système pour analyse (version unifiée v2.1)
+        Capture un instantané de l'état économique complet (ÉTAPE 7 - Pipeline snapshot propre)
 
-        ALIGNEMENT THÉORIQUE :
-        Distingue clairement RU (basé sur V_on) et masse salariale (40% organique).
-        Trace les activations des couches RAD (C2, C3) pour analyse de régulation.
-        Enregistre les métriques v2.1 (prix, inflation, entreprises).
+        Pipeline propre : compute → update → snapshot → write to history
 
-        Args:
-            births: Nombre de naissances à cet instant
-            deaths: Nombre de décès à cet instant
-            catastrophes: Nombre de catastrophes à cet instant
-            business_masse_salariale: Masse salariale des entreprises (40% organique)
-            business_NFT: Nombre de NFT financiers créés
-            C2_activated: Activation de la couche C2 (régulation profonde)
-            C3_activated: Activation de la couche C3 (rebalancement d'urgence)
-            D_lifetime: D de consommation versée au RAD au décès des agents
+        Appelé à la fin de step() AVANT self.time += 1, pour capturer
+        l'état au temps t après toutes les mises à jour économiques.
+
+        Toutes les métriques sont calculées ici, consolidant l'ancien _record_metrics().
+        Les événements du cycle (naissances, décès, etc.) sont lus depuis des variables
+        d'instance initialisées au début du step().
+
+        AMÉLIORATION v2.1 (ÉTAPE 7) :
+        - Centralise TOUT l'enregistrement historique en un seul endroit
+        - Élimine les écritures dispersées dans le code
+        - Facilite la maintenance et la cohérence des visualisations
         """
+        # Time (actuel, avant incrément)
         self.history['time'].append(self.time)
+
+        # Métriques économiques fondamentales
         self.history['total_V'].append(sum(a.V_balance for a in self.agents.values()))
         self.history['total_U'].append(sum(a.U_balance for a in self.agents.values()))
         self.history['total_D'].append(self.rad.total_D())
         self.history['thermometer'].append(self.thermometer())
         self.history['indicator'].append(self.indicator())
-        self.history['kappa'].append(self.rad.kappa)  # Coefficient de conversion V→U
-        self.history['eta'].append(self.rad.eta)  # Coefficient de rendement combustion S+U→V
+        self.history['kappa'].append(self.rad.kappa)
+        self.history['eta'].append(self.rad.eta)
         self.history['gini_coefficient'].append(self.gini_coefficient())
         self.history['circulation_rate'].append(self.circulation_rate())
 
@@ -2461,30 +2462,29 @@ class IRISEconomy:
         else:
             self.history['avg_age'].append(0)
 
-        self.history['births'].append(births)
-        self.history['deaths'].append(deaths)
-        self.history['catastrophes'].append(catastrophes)
+        # Événements du cycle (lus depuis variables d'instance)
+        self.history['births'].append(self._births_this_step)
+        self.history['deaths'].append(self._deaths_this_step)
+        self.history['catastrophes'].append(self._catastrophes_this_step)
         self.history['RU_distribue'].append(self.last_RU_per_agent)
 
         # Métriques entreprises (ALIGNEMENT THÉORIQUE)
-        self.history['business_masse_salariale'].append(business_masse_salariale)
-        self.history['business_NFT_created'].append(business_NFT)
+        self.history['business_masse_salariale'].append(self._business_masse_salariale)
+        self.history['business_NFT_created'].append(self._business_NFT_created)
 
         # Métriques activation RAD (harmonisation C1, C2, C3)
-        self.history['C2_activated'].append(1 if C2_activated else 0)
-        self.history['C3_activated'].append(1 if C3_activated else 0)
+        self.history['C2_activated'].append(1 if self._C2_activated else 0)
+        self.history['C3_activated'].append(1 if self._C3_activated else 0)
         self.history['C3_crisis_duration'].append(self.rad.C3_crisis_counter)
 
         # Métrique D de consommation de vie
-        self.history['D_lifetime'].append(D_lifetime)
+        self.history['D_lifetime'].append(self._D_lifetime_this_step)
 
-        # Métriques v2.1 supplémentaires
+        # Métriques v2.1 (prix)
         if self.enable_price_discovery and self.price_manager:
-            # Prix moyen pondéré (nouvelle API log-prices)
             mean_price = self.price_manager.mean_price()
             self.history['prix_moyen'].append(mean_price)
 
-            # Inflation (variation prix moyen depuis cycle précédent)
             prev_mean_price = self.history['prix_moyen'][-2] if len(self.history['prix_moyen']) >= 2 else mean_price
             inflation = self.price_manager.inflation(prev_mean_price)
             self.history['inflation'].append(inflation)
@@ -2492,12 +2492,12 @@ class IRISEconomy:
             self.history['prix_moyen'].append(0.0)
             self.history['inflation'].append(0.0)
 
-        # Entreprises
+        # Entreprises dynamiques
         if self.enable_dynamic_business and self.entreprise_manager:
             nb_entreprises = len(self.entreprise_manager.entreprises_actives)
             self.history['nb_entreprises'].append(nb_entreprises)
-            self.history['creations_entreprises'].append(creations_entreprises)
-            self.history['faillites_entreprises'].append(faillites_entreprises)
+            self.history['creations_entreprises'].append(self._creations_entreprises)
+            self.history['faillites_entreprises'].append(self._faillites_entreprises)
         else:
             nb_entreprises = len(self.registre_entreprises.comptes)
             self.history['nb_entreprises'].append(nb_entreprises)
