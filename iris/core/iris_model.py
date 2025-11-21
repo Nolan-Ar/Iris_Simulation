@@ -1150,7 +1150,6 @@ class IRISEconomy:
         """
         if not self.enable_dynamic_business or not self.entreprise_manager:
             return
-
         for i in range(n_entreprises):
             # Sélectionne un agent fondateur aléatoire
             if not self.agents:
@@ -1162,6 +1161,7 @@ class IRISEconomy:
             # Capital initial : 20-40% de la richesse de l'agent
             richesse = agent.V_balance + agent.U_balance
             V_initial = richesse * np.random.uniform(0.20, 0.40)
+
 
             # Type d'entreprise aléatoire
             business_type = np.random.choice(list(BusinessType))
@@ -1177,6 +1177,9 @@ class IRISEconomy:
             if business_id:
                 # Déduit le capital de l'agent
                 agent.V_balance -= V_initial
+
+        # Vérifier combien d'entreprises ont été créées
+        nb_created = len(self.registre_entreprises.comptes)
 
     def get_V_on(self) -> float:
         """
@@ -1958,9 +1961,20 @@ class IRISEconomy:
 
             # 2. Reconversions U -> V (épargne si beaucoup de liquidité)
             has_liquidity = (self.population.U > self.population.V * 0.2) & alive
-            save_amount = self.population.U[has_liquidity] * 0.05
-            self.population.U[has_liquidity] -= save_amount
-            self.population.V[has_liquidity] += save_amount
+            save_amount_U = self.population.U[has_liquidity] * 0.05
+
+            # CORRECTION THERMODYNAMIQUE: U→V doit créer D_materielle (conservation)
+            # Formule: V = U / κ (comme dans reconvert_U_to_V)
+            kappa = max(0.5, self.rad.kappa)
+            save_amount_V = save_amount_U / kappa
+
+            self.population.U[has_liquidity] -= save_amount_U
+            self.population.V[has_liquidity] += save_amount_V
+
+            # CRÉATION DE D_materielle pour maintenir l'équilibre thermodynamique
+            # Quand on cristallise U en V, on crée de la dette matérielle
+            total_V_created = np.sum(save_amount_V)
+            self.rad.D_materielle += total_V_created
 
             # 3. Transactions U entre agents (vectorisé via random_transfers_U)
             # Utilise la méthode optimisée de VectorizedPopulation
@@ -2008,6 +2022,19 @@ class IRISEconomy:
             V_total_actuel = sum(a.V_balance for a in self.agents.values())
 
             # Simule la VRAIE COMBUSTION (S + U → V) pour les entreprises
+            nb_enterprises = len(self.registre_entreprises.comptes)
+
+            # WORKAROUND: Injection continue de S et U pour simuler l'activité économique
+            # TODO: Remplacer par de vraies transactions agent→entreprise
+            # Pour chaque entreprise, on injecte mensuellement une fraction du V_entreprise
+            injection_rate = 0.04  # 4% du capital par mois en S+U (doublé pour plus de combustion)
+            for compte in self.registre_entreprises.comptes.values():
+                V_entreprise = compte.V_entreprise
+                injection_S = V_entreprise * injection_rate * 0.6  # 60% en S
+                injection_U = V_entreprise * injection_rate * 0.4  # 40% en U
+                compte.S_balance += injection_S
+                compte.U_operationnel += injection_U
+
             for business_id in list(self.registre_entreprises.comptes.keys()):
                 compte = self.registre_entreprises.get_compte(business_id)
                 if compte:
@@ -2058,14 +2085,16 @@ class IRISEconomy:
                     business_masse_salariale_total += masse_salariale_U
                     V_total_actuel += V_genere_brut  # Met à jour le total pour le prochain
 
-                    # CORRECTION E (FIX): CRÉER D seulement sur le PATRIMOINE V créé
-                    # PRINCIPE THERMODYNAMIQUE: θ = D / V_on
-                    # - V_operationnel (60%) devient du PATRIMOINE → entre dans V_on → crée D
-                    # - masse_salariale_U (40%) devient de la LIQUIDITÉ U → N'entre PAS dans V_on → ne crée PAS D_contractuelle
-                    # Si on créait D sur 100%, D croîtrait plus vite que V_on → θ divergerait
-                    # ANCIEN (bug): D_contractuelle += V_genere_brut (100%)
-                    # NOUVEAU (correct): D_contractuelle += V_operationnel (60% seulement)
-                    self.rad.D_contractuelle += V_operationnel * 1.0  # 100% du V créé, pas du U
+                    # CORRECTION E (FIX v2): CRÉER D sur 100% de la valeur générée
+                    # PRINCIPE THERMODYNAMIQUE CORRECT:
+                    # - V_genere_brut représente la VALEUR TOTALE créée (patrimoine + salaires)
+                    # - V_operationnel (60%) → patrimoine entreprise → entre directement dans V_on
+                    # - masse_salariale_U (40%) → salaires agents → se transforme en V_agents via transactions → entre dans V_on
+                    # - Les DEUX finissent dans V_on au fil du temps
+                    # → On DOIT créer D sur 100% de V_genere_brut, pas seulement 60%
+                    # ANCIEN (bug v1): D_contractuelle += V_operationnel (60%) → D croissait trop lentement
+                    # NOUVEAU (correct v2): D_contractuelle += V_genere_brut (100%)
+                    self.rad.D_contractuelle += V_genere_brut * 1.0  # 100% de la valeur créée
 
             # Distribution de la masse salariale des entreprises (en U)
             # IMPORTANT : Ce sont des SALAIRES (revenus productifs), pas du RU.
@@ -2221,6 +2250,19 @@ class IRISEconomy:
                 for new_agent in new_agents:
                     self.agents[new_agent.id] = new_agent
                     self.agent_ages[new_agent.id] = 0  # Les nouveau-nés ont 0 ans
+
+                    # CORRECTION CRITIQUE: Créer D pour les actifs des nouveau-nés
+                    # Conservation thermodynamique: V₀ = D₀ pour chaque actif
+                    for asset in new_agent.assets:
+                        asset_type = asset.asset_type
+                        if asset_type == AssetType.IMMOBILIER or asset_type == AssetType.MOBILIER:
+                            self.rad.D_materielle += asset.D_initial
+                        elif asset_type == AssetType.SERVICE:
+                            self.rad.D_services += asset.D_initial
+                        elif asset_type == AssetType.ENTREPRISE:
+                            self.rad.D_contractuelle += asset.D_initial
+                        else:
+                            self.rad.D_materielle += asset.D_initial
 
                 # CORRECTION G: Vérification V_max après naissances (cohérence démographique)
                 # Les nouveau-nés créent de nouveaux actifs, ce qui augmente V total
