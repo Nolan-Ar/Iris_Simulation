@@ -1170,19 +1170,24 @@ class IRISEconomy:
         # CORRECTION A: SYSTÈME TRI-CAPTEUR (r_t, ν_eff, τ_eng)
         # Calcul des trois capteurs selon THÉORIE §3.3.1
         r_t = theta  # Thermomètre (cible = 1.0)
-        nu_eff = self.rad.calculate_nu_eff(total_U, V_on)  # Vélocité (cible = 0.20)
-        tau_eng = self.rad.calculate_tau_eng()  # Engagement (cible = 0.35)
 
-        # Ajustement κ (kappa) avec TRI-CAPTEUR
-        # Formule : Δκ_t = α_κ×(ν_target-ν) - β_κ×(τ_eng-τ_target) + γ_κ×(1-r)
-        self.rad.update_kappa(r_t, nu_eff, tau_eng)
+        # Calcul de ν_eff : vélocité effective = (U_burn + S_burn) / V_on_prev
+        # Utilise les valeurs du RAD qui sont mises à jour pendant le cycle
+        nu_eff = self.rad.calculate_nu_eff(self.rad.U_burn, self.rad.S_burn, self.rad.V_on_previous)
 
-        # Ajustement η (eta) avec TRI-CAPTEUR
-        # Formule : Δη_t = α_η×(1-r) + β_η×(ν_target-ν) - γ_η×(τ_eng-τ_target)
-        # - Surchauffe (θ > 1) → η diminue → freine production de V
-        # - Sous-régime (θ < 1) → η augmente → stimule production de V
-        # - Équilibre (θ = 1) → η se stabilise autour de 1
-        self.rad.update_eta(r_t, nu_eff, tau_eng)
+        # Calcul de τ_eng : taux d'engagement = U_staké / U_total
+        tau_eng = self.rad.calculate_tau_eng(self.rad.U_stake, total_U)
+
+        # ANTAGONISME ALGORITHMIQUE entre κ et η avec TRI-CAPTEUR
+        # Utilise la méthode unifiée qui gère l'antagonisme entre les deux coefficients
+        # Formules :
+        #   Δκ_t = α_κ×(ν_target-ν) - β_κ×(τ_eng-τ_target) + γ_κ×(1-r)
+        #   Δη_t = α_η×(1-r) + β_η×(ν_target-ν) - γ_η×(τ_eng-τ_target)
+        # Avec antagonisme : quand Δκ et Δη vont dans le même sens, η est atténué
+        # - Surchauffe (θ > 1) → κ diminue PLUS que η (antagonisme asymétrique)
+        # - Sous-régime (θ < 1) → κ augmente PLUS que η
+        # - Équilibre (θ = 1) → κ et η se stabilisent avec oscillations amorties
+        self.rad.update_kappa_eta_antagonist(r_t, nu_eff, tau_eng)
 
         # ═══════════════════════════════════════════════════════════════════
         # COUCHE 2 (C2) : RÉGULATION PROFONDE (période T=12 cycles)
