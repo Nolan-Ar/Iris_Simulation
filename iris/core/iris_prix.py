@@ -1,8 +1,9 @@
 """
-IRIS v2.1 - Mécanisme de Prix Explicites
-==========================================
+IRIS v2.1 - Mécanisme de Prix Explicites (Log-Prices)
+======================================================
 
-Module de gestion des prix explicites dans le système IRIS.
+Module de gestion des prix explicites dans le système IRIS utilisant
+des log-prices pour garantir la stabilité numérique.
 
 Auteur: Arnault Nolan
 Email: arnaultnolan@gmail.com
@@ -10,41 +11,27 @@ Date: 2025
 
 Principes :
 -----------
-1. DÉCOUVERTE DE PRIX : Les prix émergent de l'offre et la demande
-2. MARCHÉS SECTORIELS : Prix différents par type d'actif/bien
-3. ÉLASTICITÉ : Les prix s'ajustent selon les transactions
-4. THERMOMÉTRIQUE : Les prix influencent et sont influencés par θ
+1. LOG-PRICES : Prix stockés en log pour éviter overflow/underflow
+2. DRIFT THERMOMÉTRIQUE : θ influence les prix
+3. BRUIT BORNÉ : Variations aléatoires contrôlées
+4. SÉCURITÉ : Pas de NaN, Inf ou prix ≤ 0
 
-Types de biens :
----------------
-- ALIMENTATION : Biens alimentaires (essentiels)
-- LOGEMENT : Immobilier, loyers
-- TRANSPORT : Mobilité, véhicules
-- ÉNERGIE : Électricité, carburants
-- SERVICES : Services professionnels
-- BIENS_DURABLES : Électroménager, meubles
-- CULTURE : Loisirs, éducation
-
-Formules clés :
---------------
-Prix d'équilibre :
-P_t = P_{t-1} × (1 + α × (D - O) / O)
+Formule clé :
+------------
+log(P_t) = log(P_{t-1}) + drift + noise + shock
 
 où :
-- P_t : Prix au temps t
-- D : Demande (quantité demandée)
-- O : Offre (quantité offerte)
-- α : Coefficient d'ajustement (élasticité)
+- drift = α × (θ - 1.0)  # tendance liée au thermomètre
+- noise = random ∈ [-β, +β]  # variation aléatoire bornée
+- shock = choc externe (catastrophe, etc.)
 
-Impact thermométrique :
-θ = D_total / V_circulation
-→ Si θ↑ (demande élevée) → P↑ (prix augmentent)
-→ Si θ↓ (demande faible) → P↓ (prix baissent)
+Prix physique :
+P_t = max(ε, exp(log(P_t)))
 """
 
 import numpy as np
-from dataclasses import dataclass, field
-from typing import Dict, List, Tuple
+import math
+from typing import Dict, Optional
 from enum import Enum
 
 
@@ -60,339 +47,238 @@ class GoodType(Enum):
     AUTRE = "autre"
 
 
-@dataclass
-class Good:
-    """
-    Représente un bien échangeable
-
-    Attributes:
-        good_type: Type de bien
-        nom: Nom du bien
-        prix_base: Prix de référence initial (en U)
-        elasticite: Élasticité prix-demande (-1.0 = élastique, -0.5 = inélastique)
-    """
-    good_type: GoodType
-    nom: str
-    prix_base: float
-    elasticite: float = -0.8  # Par défaut : assez élastique
-
-    def __post_init__(self):
-        """Validation"""
-        assert self.prix_base > 0, "Le prix de base doit être positif"
-        assert -2.0 <= self.elasticite <= 0.0, "L'élasticité doit être négative"
-
-
-@dataclass
-class MarketData:
-    """
-    Données d'un marché sectoriel
-
-    Un marché suit l'offre, la demande et le prix d'un type de bien.
-    """
-    good_type: GoodType
-    prix_actuel: float  # Prix en U (monnaie d'usage)
-    offre: float = 0.0  # Quantité offerte ce cycle
-    demande: float = 0.0  # Quantité demandée ce cycle
-    historique_prix: List[float] = field(default_factory=list)
-    historique_offre: List[float] = field(default_factory=list)
-    historique_demande: List[float] = field(default_factory=list)
-
-    # Paramètres d'ajustement
-    alpha_ajustement: float = 0.1  # Vitesse d'ajustement du prix
-    prix_plancher: float = 0.1  # Prix minimum (évite prix nuls)
-
-    def reset_cycle(self):
-        """Réinitialise offre/demande pour un nouveau cycle"""
-        self.offre = 0.0
-        self.demande = 0.0
-
-    def add_offre(self, quantite: float):
-        """Ajoute de l'offre"""
-        self.offre += quantite
-
-    def add_demande(self, quantite: float):
-        """Ajoute de la demande"""
-        self.demande += quantite
-
-    def ajuster_prix(self) -> float:
-        """
-        Ajuste le prix selon offre/demande
-
-        Principe :
-        - Si demande > offre → Prix monte
-        - Si demande < offre → Prix baisse
-
-        Formule :
-        P_nouveau = P_actuel × (1 + α × (D - O) / max(O, 1))
-
-        Returns:
-            Nouveau prix
-        """
-        if self.offre < 1e-6:
-            # Pas d'offre : prix reste stable (ou monte légèrement)
-            self.prix_actuel *= 1.01
-        else:
-            # Calcul du déséquilibre
-            desequilibre = (self.demande - self.offre) / self.offre
-
-            # Ajustement proportionnel
-            ajustement = self.alpha_ajustement * desequilibre
-
-            # Nouveau prix
-            self.prix_actuel *= (1 + ajustement)
-
-            # Applique le plancher
-            self.prix_actuel = max(self.prix_plancher, self.prix_actuel)
-
-        # Enregistre l'historique
-        self.historique_prix.append(self.prix_actuel)
-        self.historique_offre.append(self.offre)
-        self.historique_demande.append(self.demande)
-
-        # Limite l'historique à 100 dernières valeurs
-        if len(self.historique_prix) > 100:
-            self.historique_prix.pop(0)
-            self.historique_offre.pop(0)
-            self.historique_demande.pop(0)
-
-        return self.prix_actuel
-
-    def get_inflation(self) -> float:
-        """
-        Calcule le taux d'inflation depuis le dernier cycle
-
-        Returns:
-            Taux d'inflation (0.02 = 2% d'inflation)
-        """
-        if len(self.historique_prix) < 2:
-            return 0.0
-
-        prix_precedent = self.historique_prix[-2]
-        if prix_precedent == 0:
-            return 0.0
-
-        return (self.prix_actuel - prix_precedent) / prix_precedent
-
-
 class PriceManager:
     """
     Gestionnaire de prix pour l'économie IRIS
 
-    Gère les marchés sectoriels, la découverte de prix et l'inflation.
+    Utilise des log-prices pour la stabilité numérique :
+    - Stockage : log(P) au lieu de P
+    - Mise à jour : log(P_new) = log(P_old) + delta
+    - Extraction : P = max(epsilon, exp(log(P)))
+
+    API minimale :
+    - register_good(good_id, initial_price, weight) : enregistrer un bien
+    - step(signals) : mettre à jour les prix selon θ, chocs, etc.
+    - get_price(good_id) : obtenir le prix physique d'un bien
+    - mean_price() : prix moyen pondéré
+    - inflation(prev_mean_price) : taux d'inflation
     """
 
-    def __init__(self, prix_reference: Dict[GoodType, float] = None):
+    def __init__(self, epsilon: float = 1e-6, max_step_change: float = 0.05):
         """
         Initialise le gestionnaire de prix
 
         Args:
-            prix_reference: Dictionnaire {GoodType: prix_base} optionnel
+            epsilon: Valeur minimale pour éviter prix ≤ 0
+            max_step_change: Variation maximale de log(P) par step (5% par défaut)
         """
-        # Marchés sectoriels
-        self.marches: Dict[GoodType, MarketData] = {}
+        self.epsilon = epsilon
+        self.max_step_change = max_step_change
 
-        # Prix de référence par défaut (en U)
-        if prix_reference is None:
-            prix_reference = {
-                GoodType.ALIMENTATION: 10.0,
-                GoodType.LOGEMENT: 500.0,
-                GoodType.TRANSPORT: 50.0,
-                GoodType.ENERGIE: 30.0,
-                GoodType.SERVICES: 100.0,
-                GoodType.BIENS_DURABLES: 200.0,
-                GoodType.CULTURE: 40.0,
-                GoodType.AUTRE: 50.0
-            }
+        # Stockage en log-prices
+        self.log_prices: Dict[str, float] = {}  # good_id -> log(P)
 
-        # Initialise les marchés
-        for good_type, prix in prix_reference.items():
-            self.marches[good_type] = MarketData(
-                good_type=good_type,
-                prix_actuel=prix
-            )
+        # Poids pour prix moyen pondéré
+        self.weights: Dict[str, float] = {}  # good_id -> poids
 
-        # Catalogue de biens
-        self.catalogue: Dict[str, Good] = {}
+        # Historique (optionnel)
+        self.history_log_prices: Dict[str, list] = {}
+        self.history_mean_price: list = []
+        self.history_inflation: list = []
 
-        # Historique inflation globale
-        self.historique_inflation_globale: List[float] = []
-
-    def register_good(self, good: Good):
+    def register_good(self, good_id: str, initial_price: float, weight: float = 1.0):
         """
-        Enregistre un nouveau bien dans le catalogue
+        Enregistre un bien avec son prix initial
 
         Args:
-            good: Bien à enregistrer
+            good_id: Identifiant du bien (ex: "food", "housing")
+            initial_price: Prix initial (en U, monnaie d'usage)
+            weight: Poids dans le calcul du prix moyen (défaut: 1.0)
         """
-        self.catalogue[good.nom] = good
+        # Sécurité : prix initial > 0
+        price_safe = max(initial_price, self.epsilon)
 
-    def get_prix(self, good_type: GoodType) -> float:
+        # Stockage en log
+        self.log_prices[good_id] = np.log(price_safe)
+        self.weights[good_id] = weight
+
+        # Initialise historique
+        self.history_log_prices[good_id] = [self.log_prices[good_id]]
+
+    def step(self, signals: dict) -> None:
         """
-        Retourne le prix actuel d'un type de bien
+        Met à jour les prix en fonction des signaux économiques
 
         Args:
-            good_type: Type de bien
+            signals: Dictionnaire de signaux :
+                - 'theta' (float) : thermomètre θ = D/V_on (défaut: 1.0)
+                - 'shock' (float) : choc externe (catastrophe, etc.) (défaut: 0.0)
+                - 'noise_amplitude' (float) : amplitude du bruit (défaut: 0.01)
+                - 'drift_coeff' (float) : coefficient drift lié à θ (défaut: 0.02)
+        """
+        # Extraction des signaux
+        theta = signals.get("theta", 1.0)
+        shock = signals.get("shock", 0.0)
+        noise_amplitude = signals.get("noise_amplitude", 0.01)
+        drift_coeff = signals.get("drift_coeff", 0.02)
+
+        # Sécurité : theta valide
+        if not (0.01 <= theta <= 100.0):
+            theta = 1.0  # fallback sécurisé
+
+        for gid, logP in self.log_prices.items():
+            # Drift lié au thermomètre θ
+            # Si θ > 1 → tendance inflation
+            # Si θ < 1 → tendance déflation
+            drift = drift_coeff * (theta - 1.0)
+
+            # Bruit borné (variation aléatoire)
+            noise = np.random.uniform(-noise_amplitude, noise_amplitude)
+
+            # Choc externe
+            # (ex: catastrophe → shock < 0, relance → shock > 0)
+
+            # Variation totale
+            delta = drift + noise + shock
+
+            # Borne la variation pour stabilité
+            delta = np.clip(delta, -self.max_step_change, self.max_step_change)
+
+            # Mise à jour du log-price
+            new_logP = logP + delta
+            self.log_prices[gid] = new_logP
+
+            # Historique (optionnel, limite à 100 valeurs)
+            self.history_log_prices[gid].append(new_logP)
+            if len(self.history_log_prices[gid]) > 100:
+                self.history_log_prices[gid].pop(0)
+
+    def get_price(self, good_id: str) -> float:
+        """
+        Retourne le prix physique d'un bien
+
+        Args:
+            good_id: Identifiant du bien
 
         Returns:
-            Prix en U
+            Prix en U (monnaie d'usage), garanti > epsilon
         """
-        if good_type not in self.marches:
-            return 0.0
-        return self.marches[good_type].prix_actuel
+        if good_id not in self.log_prices:
+            return self.epsilon
 
-    def transact(self,
-                good_type: GoodType,
-                quantite: float,
-                is_achat: bool) -> float:
+        logP = self.log_prices[good_id]
+
+        # Conversion log → prix physique
+        # Sécurité : borne à ±100 pour éviter overflow
+        logP_safe = np.clip(logP, -100, 100)
+        price = float(np.exp(logP_safe))
+
+        # Sécurité : prix minimum
+        return max(self.epsilon, price)
+
+    def mean_price(self) -> float:
         """
-        Enregistre une transaction (achat ou vente)
-
-        Args:
-            good_type: Type de bien
-            quantite: Quantité échangée
-            is_achat: True si achat (demande), False si vente (offre)
+        Calcule le prix moyen pondéré de tous les biens
 
         Returns:
-            Montant total de la transaction (en U)
+            Prix moyen (moyenne pondérée)
         """
-        if good_type not in self.marches:
-            return 0.0
-
-        marche = self.marches[good_type]
-
-        if is_achat:
-            # Demande
-            marche.add_demande(quantite)
-        else:
-            # Offre
-            marche.add_offre(quantite)
-
-        # Montant de la transaction au prix actuel
-        return marche.prix_actuel * quantite
-
-    def ajuster_tous_prix(self, thermometre: float = 1.0):
-        """
-        Ajuste tous les prix selon offre/demande + influence thermométrique
-
-        Le thermomètre θ global influence tous les prix :
-        - θ > 1 (excès demande) → Prix montent (×θ^0.1)
-        - θ < 1 (excès offre) → Prix baissent (×θ^0.1)
-
-        Args:
-            thermometre: Thermomètre θ = D/V du système IRIS
-        """
-        # Facteur thermométrique (influence modérée)
-        # θ = 1.0 → facteur = 1.0 (neutre)
-        # θ = 1.1 → facteur ≈ 1.01 (+1%)
-        # θ = 0.9 → facteur ≈ 0.99 (-1%)
-        facteur_thermo = thermometre ** 0.1
-
-        for good_type, marche in self.marches.items():
-            # Ajustement local (offre/demande)
-            marche.ajuster_prix()
-
-            # Ajustement thermométrique global
-            marche.prix_actuel *= facteur_thermo
-
-            # Plancher
-            marche.prix_actuel = max(marche.prix_plancher, marche.prix_actuel)
-
-            # Reset cycle
-            marche.reset_cycle()
-
-    def get_inflation_globale(self) -> float:
-        """
-        Calcule l'inflation globale (moyenne pondérée des secteurs)
-
-        Returns:
-            Taux d'inflation global
-        """
-        if not self.marches:
-            return 0.0
-
-        # Moyenne simple des inflations sectorielles
-        inflations = [marche.get_inflation() for marche in self.marches.values()]
-        inflation_moyenne = np.mean(inflations)
-
-        # Enregistre
-        self.historique_inflation_globale.append(inflation_moyenne)
-
-        # Limite l'historique
-        if len(self.historique_inflation_globale) > 100:
-            self.historique_inflation_globale.pop(0)
-
-        return inflation_moyenne
-
-    def get_indice_prix(self, reference_cycle: int = 0) -> float:
-        """
-        Calcule l'indice des prix par rapport à un cycle de référence
-
-        Analogue de l'IPC (Indice des Prix à la Consommation)
-
-        Args:
-            reference_cycle: Cycle de référence (0 = début)
-
-        Returns:
-            Indice (1.0 = même niveau, 1.05 = +5%)
-        """
-        if not self.marches:
+        if not self.log_prices:
             return 1.0
 
-        # Calcul de l'indice moyen
-        indices = []
-        for good_type, marche in self.marches.items():
-            if len(marche.historique_prix) > reference_cycle:
-                prix_ref = marche.historique_prix[reference_cycle]
-                if prix_ref > 0:
-                    indice = marche.prix_actuel / prix_ref
-                    indices.append(indice)
+        numerator = 0.0
+        denominator = 0.0
 
-        if not indices:
+        for gid, logP in self.log_prices.items():
+            w = self.weights.get(gid, 1.0)
+            p = self.get_price(gid)
+
+            numerator += w * p
+            denominator += w
+
+        if denominator <= 0:
             return 1.0
 
-        return np.mean(indices)
+        mean = numerator / denominator
 
-    def get_statistics(self) -> Dict:
+        # Historique
+        self.history_mean_price.append(mean)
+        if len(self.history_mean_price) > 100:
+            self.history_mean_price.pop(0)
+
+        return mean
+
+    def inflation(self, prev_mean_price: float) -> float:
         """
-        Retourne les statistiques des marchés
+        Calcule le taux d'inflation depuis le prix moyen précédent
+
+        Args:
+            prev_mean_price: Prix moyen au cycle précédent
+
+        Returns:
+            Taux d'inflation (0.02 = 2% d'inflation)
+        """
+        current = self.mean_price()
+
+        if prev_mean_price <= 0:
+            return 0.0
+
+        infl = (current - prev_mean_price) / prev_mean_price
+
+        # Historique
+        self.history_inflation.append(infl)
+        if len(self.history_inflation) > 100:
+            self.history_inflation.pop(0)
+
+        return infl
+
+    def get_statistics(self) -> dict:
+        """
+        Retourne des statistiques sur les prix
 
         Returns:
             Dictionnaire de statistiques
         """
         stats = {
-            'nb_marches': len(self.marches),
-            'inflation_globale': self.get_inflation_globale(),
-            'indice_prix': self.get_indice_prix(),
-            'marches': {}
+            'nb_goods': len(self.log_prices),
+            'mean_price': self.mean_price(),
+            'prices': {}
         }
 
-        for good_type, marche in self.marches.items():
-            stats['marches'][good_type.value] = {
-                'prix': marche.prix_actuel,
-                'offre': marche.offre,
-                'demande': marche.demande,
-                'inflation': marche.get_inflation(),
-                'nb_transactions': len(marche.historique_prix)
-            }
+        for gid in self.log_prices.keys():
+            stats['prices'][gid] = self.get_price(gid)
+
+        if self.history_mean_price:
+            stats['mean_price_history_length'] = len(self.history_mean_price)
+
+        if self.history_inflation:
+            stats['latest_inflation'] = self.history_inflation[-1] if self.history_inflation else 0.0
+            stats['avg_inflation'] = np.mean(self.history_inflation) if self.history_inflation else 0.0
 
         return stats
 
-    def simulate_random_transactions(self, n_transactions: int = 50):
+    def validate(self) -> tuple[bool, list]:
         """
-        Simule des transactions aléatoires (pour test)
+        Valide l'état du gestionnaire de prix
 
-        Args:
-            n_transactions: Nombre de transactions à simuler
+        Returns:
+            (is_valid, errors) : (True si valide, liste des erreurs)
         """
-        for _ in range(n_transactions):
-            # Type de bien aléatoire
-            good_type = np.random.choice(list(self.marches.keys()))
+        errors = []
 
-            # Quantité aléatoire
-            quantite = np.random.uniform(0.1, 10.0)
+        for gid, logP in self.log_prices.items():
+            # Vérif NaN/Inf
+            if math.isnan(logP) or math.isinf(logP):
+                errors.append(f"Prix invalide pour {gid}: log(P)={logP}")
 
-            # Achat ou vente (50/50)
-            is_achat = np.random.random() < 0.5
+            # Vérif prix physique > 0
+            p = self.get_price(gid)
+            if p <= 0:
+                errors.append(f"Prix négatif/nul pour {gid}: P={p}")
 
-            # Transaction
-            self.transact(good_type, quantite, is_achat)
+        # Vérif prix moyen
+        mean = self.mean_price()
+        if math.isnan(mean) or math.isinf(mean) or mean <= 0:
+            errors.append(f"Prix moyen invalide: {mean}")
+
+        return (len(errors) == 0, errors)
