@@ -41,6 +41,15 @@ logger = logging.getLogger(__name__)
 @dataclass
 class RADState:
     """
+    ⚠️ OBSOLÈTE - Cette classe est conservée pour compatibilité historique uniquement.
+
+    La version de référence de RADState est maintenant dans iris_model.py (464 lignes, complète).
+
+    Cette version simplifiée n'est PLUS utilisée par IRISEconomy.
+    Pour toute modification, utiliser iris_model.RADState.
+
+    ---
+
     État du Régulateur Automatique Décentralisé (RAD).
 
     Le RAD maintient l'équilibre thermodynamique du système IRIS via:

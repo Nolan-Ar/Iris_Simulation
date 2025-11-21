@@ -106,8 +106,8 @@ Exemples d'utilisation:
     # Paramètres avancés
     parser.add_argument(
         '--mode-population', '--mode', type=str, default='object',
-        choices=['object', 'vectorized'],
-        help='Mode de gestion de la population: "object" (détaillé, lent) ou "vectorized" (rapide, grandes populations) (défaut: object)'
+        choices=['object'],
+        help='Mode de gestion de la population (seul "object" est supporté dans cette version)'
     )
     parser.add_argument(
         '--seed', type=int, default=None,
@@ -255,15 +255,10 @@ def print_summary(economy: IRISEconomy):
 
     print(f"\nDurée: {economy.time} années")
 
-    # Mode de population
-    if economy.mode_population == "object":
-        print(f"Population finale: {len(economy.agents)} agents (mode: object)")
-        total_V = sum(a.V_balance for a in economy.agents.values())
-        total_U = sum(a.U_balance for a in economy.agents.values())
-    else:  # vectorized
-        print(f"Population finale: {economy.population.total_population()} agents (mode: vectorized)")
-        total_V = economy.population.total_V()
-        total_U = economy.population.total_U()
+    # Population (mode agent-based objet)
+    print(f"Population finale: {len(economy.agents)} agents")
+    total_V = sum(a.V_balance for a in economy.agents.values())
+    total_U = sum(a.U_balance for a in economy.agents.values())
 
     # Statistiques économiques
     total_D = economy.rad.total_D()
@@ -283,13 +278,9 @@ def print_summary(economy: IRISEconomy):
 
     # Démographie
     if economy.enable_demographics and economy.demographics:
-        if economy.mode_population == "object":
-            stats_demo = economy.demographics.get_statistics(economy.agent_ages)
-            print(f"\nDémographie:")
-            print(f"  Âge moyen: {stats_demo['age_moyen']:.1f} ans")
-        else:  # vectorized
-            print(f"\nDémographie:")
-            print(f"  Âge moyen: {economy.population.average_age():.1f} ans")
+        stats_demo = economy.demographics.get_statistics(economy.agent_ages)
+        print(f"\nDémographie:")
+        print(f"  Âge moyen: {stats_demo['age_moyen']:.1f} ans")
         print(f"  Naissances totales: {sum(economy.history['births'])}")
         print(f"  Décès totaux: {sum(economy.history['deaths'])}")
 
@@ -389,10 +380,7 @@ def main():
             # Affichage du progrès (tous les 12 steps = 1 an)
             if args.verbose or (step + 1) % 12 == 0:  # Affiche tous les ans
                 theta = economy.thermometer()
-                if economy.mode_population == "object":
-                    pop = len(economy.agents)
-                else:  # vectorized
-                    pop = economy.population.total_population()
+                pop = len(economy.agents)
                 current_year = (step + 1) // 12
                 if (step + 1) % 12 == 0:  # Affiche seulement à la fin de chaque année
                     print(f"  Année {current_year}/{years} - Pop: {pop} - θ: {theta:.4f}")

@@ -61,7 +61,9 @@ from .iris_comptes_entreprises import (
     FluxEntreprise,
     BusinessType,
 )
-from .iris_rad import RADState as RAD
+# RADState est maintenant défini dans iris_model.py (version complète et validée)
+# L'ancienne version dans iris_rad.py est obsolète
+from .iris_model import RADState as RAD
 from .iris_oracle import (
     Oracle,
     NFTMetadata,

@@ -833,7 +833,8 @@ class IRISEconomy:
             max_population: Population maximale (0 = illimité, défaut: 10000)
             initial_total_wealth_V: Richesse totale initiale à répartir entre agents
                                     (None = calcul auto: ~5.78 V/agent, ancien défaut: 1 200 000)
-            mode_population: "object" (détaillé, NFT) ou "vectorized" (rapide, gros volumes)
+            mode_population: Doit être "object" (mode agent-based détaillé avec NFT).
+                                 Le mode "vectorized" est obsolète et désactivé.
             taux_creation_entreprises: Taux de création d'entreprises (si enable_dynamic_business)
             taux_faillite_entreprises: Taux de faillite de base (si enable_dynamic_business)
             seed: Graine aléatoire pour reproductibilité (None = aléatoire)
@@ -855,7 +856,6 @@ class IRISEconomy:
 
         self.agents: Dict[str, Agent] = {}
         self.assets: Dict[str, Asset] = {}
-        self.population = None  # VectorizedPopulation si mode vectorisé
 
         self.rad = RADState()
         self.gold_factor = gold_factor
@@ -972,17 +972,11 @@ class IRISEconomy:
         self.RU_min_absolute = 0.1    # Plancher absolu (sécurité)
         self.RU_max_absolute = 500.0  # Plafond absolu (anti-explosion)
 
-        # Initialisation avec des agents et actifs
-        if self.mode_population == "object":
-            self._initialize_agents_object(initial_agents)
-            # Initialise les âges si démographie activée
-            if self.enable_demographics:
-                self.agent_ages = self.demographics.initialize_ages(self.agents)
-        elif self.mode_population == "vectorized":
-            self._initialize_agents_vectorized(initial_agents)
-            # En mode vectorisé, les âges sont déjà initialisés dans VectorizedPopulation
-        else:
-            raise ValueError(f"Mode population inconnu: {self.mode_population}")
+        # Initialisation avec des agents et actifs (mode objet uniquement)
+        self._initialize_agents_object(initial_agents)
+        # Initialise les âges si démographie activée
+        if self.enable_demographics:
+            self.agent_ages = self.demographics.initialize_ages(self.agents)
 
         # Initialise quelques entreprises si entreprises dynamiques activées
         if self.enable_dynamic_business and self.entreprise_manager:
@@ -1116,43 +1110,6 @@ class IRISEconomy:
             f"Déséquilibre initial : V={total_V:.2f}, D={total_D:.2f}"
 
         print(f"OK: Équilibre initial vérifié : V₀ = D₀ = {total_V:.2f}")
-
-    def _initialize_agents_vectorized(self, n_agents: int) -> None:
-        """
-        Initialise la population en mode vectorisé (MODE VECTORISÉ)
-
-        Cette méthode crée une VectorizedPopulation avec distributions réalistes :
-        - Distribution triangulaire des âges (mode 32 ans, moyenne cible 36 ans)
-        - Distribution log-normale des richesses V
-        - Renormalisation pour respecter initial_total_wealth_V
-        - Initialisation du RAD avec équilibre V = D
-
-        Args:
-            n_agents: Nombre d'agents à créer
-        """
-        from .iris_population_vectorized import VectorizedPopulation
-
-        # Création du générateur aléatoire avec seed si fourni
-        rng = np.random.default_rng(self.seed)
-
-        # Création de la population vectorisée avec distribution initiale
-        self.population = VectorizedPopulation.from_initial_distribution(
-            n_agents=n_agents,
-            total_V=self.initial_total_wealth_V,
-            rng=rng,
-            target_mean_age=36.0  # Âge moyen cible de la population
-        )
-
-        # === INITIALISATION DU RAD ===
-        # En mode vectorisé, on initialise le RAD avec D total = V total
-        # Distribution sectorielle par défaut : 50% matérielle, 30% services, 20% contractuelle
-        total_D = self.population.total_V()
-        self.rad.D_materielle = total_D * 0.50
-        self.rad.D_services = total_D * 0.30
-        self.rad.D_contractuelle = total_D * 0.20
-
-        print(f"INFO: Population vectorisée initialisée - {n_agents} agents, V total = {total_D:.2f}")
-        print(f"OK: Équilibre initial vérifié : V₀ = D₀ = {total_D:.2f}")
 
     def _initialize_entreprises(self, n_entreprises: int) -> None:
         """
@@ -1402,13 +1359,8 @@ class IRISEconomy:
         Returns:
             Coefficient entre 0 (égalité parfaite) et 1 (inégalité maximale)
         """
-        # Mode de population
-        if self.mode_population == "object":
-            # Récupère toutes les richesses (V + U) de chaque agent
-            wealths = np.array([agent.total_wealth() for agent in self.agents.values()])
-        else:  # vectorized
-            # Utilise la méthode optimisée de VectorizedPopulation
-            return self.population.gini_coefficient()
+        # Récupère toutes les richesses (V + U) de chaque agent
+        wealths = np.array([agent.total_wealth() for agent in self.agents.values()])
 
         # Trie par richesse croissante (nécessaire pour le calcul de Gini)
         wealths = np.sort(wealths)
@@ -1916,9 +1868,7 @@ class IRISEconomy:
 
         # 0a. Vieillissement de la population (tous les 12 steps = 1 fois/an)
         if self.enable_demographics and self.time % STEPS_PER_YEAR == 0:
-            if self.mode_population == "object":
-                self.agent_ages = self.demographics.age_population(self.agent_ages)
-            # En mode vectorisé, le vieillissement est géré dans process_vectorized()
+            self.agent_ages = self.demographics.age_population(self.agent_ages)
 
         # 0b. Catastrophes aléatoires (déclenchement potentiel chaque step, probabilité annuelle)
         if self.enable_catastrophes and self.time % STEPS_PER_YEAR == 0:
@@ -1928,12 +1878,10 @@ class IRISEconomy:
             self._catastrophes_this_step = len(new_events)
 
         # === TRANSACTIONS ÉCONOMIQUES ===
-        # En mode objet : transactions individuelles
-        # En mode vectorisé : opérations vectorielles
-        if self.mode_population == "object":
-            agent_ids = list(self.agents.keys())
-            if not agent_ids:  # Sécurité : arrête si plus d'agents
-                return
+        # Transactions individuelles (mode agent-based objet)
+        agent_ids = list(self.agents.keys())
+        if not agent_ids:  # Sécurité : arrête si plus d'agents
+            return
 
             # 1. Conversions V -> U aléatoires (agents activent leur patrimoine)
             # CORRECTION : Réduit la fréquence et le montant pour éviter vidange de V
@@ -1973,54 +1921,6 @@ class IRISEconomy:
             # 4. Distribution du revenu universel (tous les 12 steps = 1 fois/an)
             if self.time % STEPS_PER_YEAR == 0:
                 self.distribute_universal_income()
-
-        elif self.mode_population == "vectorized":
-            # === MODE VECTORISÉ : opérations économiques par arrays ===
-            if self.population.total_population() == 0:
-                return
-
-            alive = self.population.is_alive
-
-            # 1. Conversions V -> U (agents avec peu de U activent leur patrimoine)
-            needs_liquidity = (self.population.V > 0) & (self.population.U < self.population.V * 0.1) & alive
-            convert_amount = self.population.V[needs_liquidity] * 0.02
-            self.population.V[needs_liquidity] -= convert_amount
-            self.population.U[needs_liquidity] += convert_amount
-
-            # 2. Reconversions U -> V (épargne si beaucoup de liquidité)
-            has_liquidity = (self.population.U > self.population.V * 0.2) & alive
-            save_amount_U = self.population.U[has_liquidity] * 0.05
-
-            # CORRECTION THERMODYNAMIQUE: U→V doit créer D_materielle (conservation)
-            # Formule: V = U / κ (comme dans reconvert_U_to_V)
-            kappa = max(0.5, self.rad.kappa)
-            save_amount_V = save_amount_U / kappa
-
-            self.population.U[has_liquidity] -= save_amount_U
-            self.population.V[has_liquidity] += save_amount_V
-
-            # CRÉATION DE D_materielle pour maintenir l'équilibre thermodynamique
-            # Quand on cristallise U en V, on crée de la dette matérielle
-            total_V_created = np.sum(save_amount_V)
-            self.rad.D_materielle += total_V_created
-
-            # 3. Transactions U entre agents (vectorisé via random_transfers_U)
-            # Utilise la méthode optimisée de VectorizedPopulation
-            rng = np.random.default_rng(self.seed + self.time if self.seed is not None else None)
-            self.population.random_transfers_U(
-                rng=rng,
-                n_transfers=n_transactions * 10,
-                max_fraction=0.1
-            )
-
-            # 4. Distribution du revenu universel (tous les 12 steps = 1 fois/an)
-            if self.time % STEPS_PER_YEAR == 0:
-                # Applique le revenu universel à tous les agents vivants
-                ru_amount = self.universal_income_rate * self.population.total_V() / max(1, self.population.total_population())
-                self.population.apply_universal_income(ru_amount)
-
-            # Mise à jour de la richesse
-            self.population.update_wealth()
 
         # 4a. COMBUSTION entreprises : S + U → V, puis distribution ORGANIQUE 40/60 (chaque step = 1 fois/mois)
         # ALIGNEMENT THÉORIQUE : 40% → masse salariale, 60% → trésorerie
@@ -2304,20 +2204,6 @@ class IRISEconomy:
                             reduction_ratio = max(0.0, (newborn_V_total - excess_V) / newborn_V_total)
                             for new_agent in new_agents:
                                 new_agent.V_balance *= reduction_ratio
-
-            elif self.mode_population == "vectorized":
-                # === MODE VECTORISÉ : traitement par arrays NumPy ===
-                # Toute la démographie (vieillissement, morts, naissances) en une seule passe
-                rng = np.random.default_rng(self.seed if hasattr(self, 'seed') else None)
-                self._births_this_step, self._deaths_this_step = self.demographics.process_vectorized(
-                    self.population, self.time, rng
-                )
-
-                # En mode vectorisé, pas de D_lifetime détaillé (approximation)
-                self._D_lifetime_this_step = self._deaths_this_step * self.demographics.life_expectancy * \
-                                      getattr(self.demographics, "consumption_D_per_year", 0.0)
-                if self._D_lifetime_this_step > 0:
-                    self.rad.D_services += self._D_lifetime_this_step
 
         # 6b. Mise à jour des prix (si price_discovery activé)
         if self.enable_price_discovery and self.price_manager:

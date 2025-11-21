@@ -86,24 +86,41 @@ class PriceManager:
         self.history_mean_price: list = []
         self.history_inflation: list = []
 
-    def register_good(self, good_id: str, initial_price: float, weight: float = 1.0):
+    def _normalize_good_id(self, good_id) -> str:
+        """
+        Normalise un identifiant de bien (accepte GoodType ou str)
+
+        Args:
+            good_id: Identifiant brut (GoodType, str, ou autre)
+
+        Returns:
+            Identifiant normalisé en str
+        """
+        if isinstance(good_id, GoodType):
+            return good_id.value
+        return str(good_id)
+
+    def register_good(self, good_id, initial_price: float, weight: float = 1.0):
         """
         Enregistre un bien avec son prix initial
 
         Args:
-            good_id: Identifiant du bien (ex: "food", "housing")
+            good_id: Identifiant du bien (str ou GoodType, ex: "food", GoodType.ALIMENTATION)
             initial_price: Prix initial (en U, monnaie d'usage)
             weight: Poids dans le calcul du prix moyen (défaut: 1.0)
         """
+        # Normalise l'identifiant (accepte GoodType ou str)
+        gid = self._normalize_good_id(good_id)
+
         # Sécurité : prix initial > 0
         price_safe = max(initial_price, self.epsilon)
 
         # Stockage en log
-        self.log_prices[good_id] = np.log(price_safe)
-        self.weights[good_id] = weight
+        self.log_prices[gid] = np.log(price_safe)
+        self.weights[gid] = weight
 
         # Initialise historique
-        self.history_log_prices[good_id] = [self.log_prices[good_id]]
+        self.history_log_prices[gid] = [self.log_prices[gid]]
 
     def step(self, signals: dict) -> None:
         """
@@ -153,20 +170,23 @@ class PriceManager:
             if len(self.history_log_prices[gid]) > 100:
                 self.history_log_prices[gid].pop(0)
 
-    def get_price(self, good_id: str) -> float:
+    def get_price(self, good_id) -> float:
         """
         Retourne le prix physique d'un bien
 
         Args:
-            good_id: Identifiant du bien
+            good_id: Identifiant du bien (str ou GoodType)
 
         Returns:
             Prix en U (monnaie d'usage), garanti > epsilon
         """
-        if good_id not in self.log_prices:
+        # Normalise l'identifiant (accepte GoodType ou str)
+        gid = self._normalize_good_id(good_id)
+
+        if gid not in self.log_prices:
             return self.epsilon
 
-        logP = self.log_prices[good_id]
+        logP = self.log_prices[gid]
 
         # Conversion log → prix physique
         # Sécurité : borne à ±100 pour éviter overflow
@@ -175,6 +195,18 @@ class PriceManager:
 
         # Sécurité : prix minimum
         return max(self.epsilon, price)
+
+    def get_prix(self, good_id) -> float:
+        """
+        Alias de get_price() pour compatibilité
+
+        Args:
+            good_id: Identifiant du bien (str ou GoodType)
+
+        Returns:
+            Prix en U (monnaie d'usage), garanti > epsilon
+        """
+        return self.get_price(good_id)
 
     def mean_price(self) -> float:
         """

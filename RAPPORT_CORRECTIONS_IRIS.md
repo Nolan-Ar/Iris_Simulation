@@ -272,6 +272,8 @@ for asset in new_agent.assets:
 ### Bug #2 : U→V sans création D (mode vectorisé)
 **Impact** : Fuite de conservation en mode vectorisé
 
+> **NOTE (Mise à jour 2025)** : Le mode vectorisé a été désactivé et supprimé du code. Seul le mode "object" (agent-based) est maintenant supporté. Cette section est conservée pour référence historique.
+
 **Problème** (`iris_model.py:1959-1963 AVANT`) :
 ```python
 # 2. Reconversions U -> V (épargne si beaucoup de liquidité)
@@ -520,7 +522,7 @@ Le système RAD tri-capteur fonctionne parfaitement :
 
 **Corrections appliquées** :
 1. Newborn asset creation : lognormal(8, 1.0) → lognormal(1.5, 0.8)
-2. U→V savings conversion : ajout création D_materielle en mode vectorisé
+2. U→V savings conversion : ajout création D_materielle ~~en mode vectorisé~~ (mode vectorisé obsolète - supprimé depuis)
 3. Enterprise combustion initialization : ajout S_balance et U_operationnel
 4. Continuous S/U injection workaround : 4% mensuel
 
@@ -595,9 +597,11 @@ for compte in self.registre_entreprises.comptes.values():
 
 ---
 
-#### 3. Mode vectorisé non testé
-**Status** : Tests effectués en mode "object" uniquement
-**TODO** : Valider corrections en mode "vectorized" pour grandes populations
+#### 3. Mode vectorisé ~~non testé~~ **SUPPRIMÉ**
+**Status** : ~~Tests effectués en mode "object" uniquement~~ **Le mode vectorisé a été désactivé et supprimé (2025)**
+~~**TODO** : Valider corrections en mode "vectorized" pour grandes populations~~
+
+> **DÉCISION ARCHITECTURE** : Le mode vectorisé était expérimental et non suffisamment testé. Il a été complètement supprimé du code pour simplifier la maintenance et éviter les bugs. Seul le mode "object" (agent-based) est maintenant supporté et validé.
 
 ---
 
