@@ -844,9 +844,14 @@ class IRISEconomy:
             np.random.seed(seed)
 
         # Mode de population
-        if mode_population not in ["object", "vectorized"]:
-            raise ValueError(f"mode_population doit être 'object' ou 'vectorized', pas '{mode_population}'")
-        self.mode_population = mode_population
+        # IMPORTANT: Mode vectorisé désactivé (expérimental et non fiabilisé)
+        if mode_population != "object":
+            raise NotImplementedError(
+                f"Le mode '{mode_population}' est expérimental et désactivé dans cette version. "
+                f"Seul le mode 'object' est supporté. "
+                f"Pour réactiver le mode vectorisé, voir RAPPORT_CORRECTIONS_IRIS.md section 'Mode vectorisé'."
+            )
+        self.mode_population = "object"
 
         self.agents: Dict[str, Agent] = {}
         self.assets: Dict[str, Asset] = {}
@@ -907,7 +912,15 @@ class IRISEconomy:
 
         # Si prix explicites activés, initialise le gestionnaire
         if enable_price_discovery:
-            self.price_manager = PriceManager()
+            self.price_manager = PriceManager(epsilon=1e-6, max_step_change=0.05)
+
+            # Enregistre quelques biens par défaut avec poids
+            # Poids basés sur importance dans panier consommation
+            self.price_manager.register_good("food", initial_price=1.0, weight=0.25)
+            self.price_manager.register_good("housing", initial_price=1.0, weight=0.30)
+            self.price_manager.register_good("services", initial_price=1.0, weight=0.20)
+            self.price_manager.register_good("energy", initial_price=1.0, weight=0.15)
+            self.price_manager.register_good("culture", initial_price=1.0, weight=0.10)
 
         # Si entreprises dynamiques activées, initialise le gestionnaire
         if enable_dynamic_business:
@@ -2297,6 +2310,16 @@ class IRISEconomy:
                 if D_lifetime_this_step > 0:
                     self.rad.D_services += D_lifetime_this_step
 
+        # 6b. Mise à jour des prix (si price_discovery activé)
+        if self.enable_price_discovery and self.price_manager:
+            # Appeler price_manager.step() avec signals
+            self.price_manager.step({
+                "theta": self.thermometer(),
+                "shock": 0.0,  # TODO: ajouter choc de catastrophes si nécessaire
+                "noise_amplitude": 0.01,
+                "drift_coeff": 0.02
+            })
+
         # 7. Enregistrement des métriques
         self._record_metrics(births_this_step, deaths_this_step, catastrophes_this_step,
                             business_masse_salariale=business_masse_salariale_total,
@@ -2457,13 +2480,13 @@ class IRISEconomy:
 
         # Métriques v2.1 supplémentaires
         if self.enable_price_discovery and self.price_manager:
-            # Prix moyen (moyenne tous secteurs)
-            prix_secteurs = [m.prix_actuel for m in self.price_manager.marches.values()]
-            prix_moyen = np.mean(prix_secteurs) if prix_secteurs else 0.0
-            self.history['prix_moyen'].append(prix_moyen)
+            # Prix moyen pondéré (nouvelle API log-prices)
+            mean_price = self.price_manager.mean_price()
+            self.history['prix_moyen'].append(mean_price)
 
-            # Inflation
-            inflation = self.price_manager.get_inflation_globale()
+            # Inflation (variation prix moyen depuis cycle précédent)
+            prev_mean_price = self.history['prix_moyen'][-2] if len(self.history['prix_moyen']) >= 2 else mean_price
+            inflation = self.price_manager.inflation(prev_mean_price)
             self.history['inflation'].append(inflation)
         else:
             self.history['prix_moyen'].append(0.0)

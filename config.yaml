@@ -157,7 +157,7 @@ modules:
   enable_business_combustion: true  # Combustion S+U→V
   enable_dynamic_business: true  # Créations/faillites
   enable_chambre_relance: true  # Redistribution actifs orphelins
-  enable_price_discovery: true  # Découverte de prix
+  enable_price_discovery: false  # Découverte de prix (désactivé par défaut - en développement)
   enable_oracle: true  # Enregistrement des flux
 
 # =============================================================================
