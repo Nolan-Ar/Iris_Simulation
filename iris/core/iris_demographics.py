@@ -40,7 +40,7 @@ class Demographics:
                  retirement_age: int = 65,
                  wealth_influence: bool = True,
                  max_population: int = 10000,
-                 consumption_D_per_year: float = 1_000.0):
+                 consumption_D_per_year: float = 0.25):
         """
         Initialise le module démographique
 
@@ -404,8 +404,10 @@ class Demographics:
 
             for j in range(n_initial_assets):
                 asset_type = np.random.choice(list(AssetType))
-                # Petites valeurs pour un jeune
-                real_value = np.random.lognormal(8, 1.0)  # Plus petit que la moyenne
+                # CORRECTION: Petites valeurs VRAIMENT petites pour un jeune
+                # Ancien: lognormal(8, 1.0) ≈ exp(8) = 3000 (trop élevé!)
+                # Nouveau: lognormal(1.5, 0.8) ≈ exp(1.5) = 4.5 (cohérent avec économie)
+                real_value = np.random.lognormal(1.5, 0.8)  # Beaucoup plus petit que la moyenne
 
                 asset = Asset(
                     id=f"asset_{new_id}_{j}",

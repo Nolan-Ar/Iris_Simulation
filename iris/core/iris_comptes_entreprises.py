@@ -201,6 +201,12 @@ class CompteEntreprise:
         # Soldes
         self.V_operationnel: float = 0.0  # Trésorerie opérationnelle (V)
 
+        # CORRECTION: Ajout de S et U pour permettre la combustion
+        # L'entreprise doit avoir du Stipulat (S) et de la liquidité (U) pour opérer
+        # On initialise avec 50% du capital en S et 50% en U
+        self.S_balance: float = V_entreprise * 0.5  # Stipulat (contrats/engagements)
+        self.U_operationnel: float = V_entreprise * 0.5  # Liquidité opérationnelle
+
         # NFT financiers émis
         self.nft_financiers: Dict[str, NFTFinancier] = {}
 

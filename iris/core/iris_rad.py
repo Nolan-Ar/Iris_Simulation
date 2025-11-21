@@ -70,17 +70,37 @@ class RADState:
     kappa: float = 1.0              # Coefficient conversion V→U
     eta: float = 1.0                # Coefficient rendement combustion S+U→V
 
-    # Bornes de κ (kappa)
-    kappa_min: float = 0.5
-    kappa_max: float = 2.0
-    kappa_beta: float = 0.5         # Sensibilité à l'indicateur I
-    kappa_smoothing: float = 0.1    # Lissage temporel
+    # Bornes de κ (kappa) - CORRECTION C: bornes plus strictes [0.7, 1.3]
+    kappa_min: float = 0.7
+    kappa_max: float = 1.3
 
-    # Bornes de η (eta)
-    eta_min: float = 0.5
-    eta_max: float = 2.0
-    eta_alpha: float = 0.5          # Sensibilité à l'indicateur I
-    eta_smoothing: float = 0.15     # Lissage temporel
+    # Bornes de η (eta) - CORRECTION C: bornes plus strictes [0.7, 1.3]
+    eta_min: float = 0.7
+    eta_max: float = 1.3
+
+    # === CAPTEURS (SENSORS) - SYSTÈME TRI-CAPTEUR (CORRECTION A) ===
+    # Stockage des valeurs actuelles des capteurs
+    nu_eff: float = 0.20         # Vitesse circulation (U_burn+S_burn)/V_on
+    tau_eng: float = 0.35        # Taux engagement U_staké/U
+
+    # Cibles des capteurs (THÉORIE §3.3.2)
+    nu_target: float = 0.20      # Cible vitesse circulation (20%)
+    tau_target: float = 0.35     # Cible taux engagement (35%)
+
+    # Coefficients tri-capteur (THÉORIE §3.3.1)
+    # Pour Δη: α_η=0.3, β_η=0.4, γ_η=0.2
+    alpha_eta: float = 0.3       # Poids thermomètre dans Δη
+    beta_eta: float = 0.4        # Poids vitesse dans Δη
+    gamma_eta: float = 0.2       # Poids engagement dans Δη
+
+    # Pour Δκ: α_κ=0.4, β_κ=0.3, γ_κ=0.2
+    alpha_kappa: float = 0.4     # Poids vitesse dans Δκ
+    beta_kappa: float = 0.3      # Poids engagement dans Δκ
+    gamma_kappa: float = 0.2     # Poids thermomètre dans Δκ
+
+    # Contraintes de variation (THÉORIE §3.3.1)
+    max_delta_eta: float = 0.15   # |Δη| ≤ 0.15 (15% max par cycle)
+    max_delta_kappa: float = 0.15 # |Δκ| ≤ 0.15 (15% max par cycle)
 
     # Amortissement de D
     delta_m: float = 0.001041666    # Amortissement mensuel ≈ 0.104%/mois ≈ 1.25%/an
@@ -171,105 +191,136 @@ class RADState:
 
         return theta
 
-    def compute_kappa_target(self, indicator: float) -> float:
+    def compute_delta_eta(self, r_t: float, nu_eff: float, tau_eng: float) -> float:
         """
-        Calcule la valeur cible de κ (kappa) selon l'indicateur I = θ - 1.
+        Calcule la VARIATION Δη selon le système tri-capteur (THÉORIE §3.3.1).
 
-        PRINCIPE CONTRACYCLIQUE:
-        - I > 0 (θ > 1, surchauffe) → κ < 1 → freine conversion V→U
-        - I < 0 (θ < 1, sous-régime) → κ > 1 → stimule conversion V→U
-        - I = 0 (θ = 1, équilibre) → κ = 1 → neutre
+        FORMULE THÉORIQUE (Iris_proto_complet.md §3.3.1):
+        Δη_t = +α_η × (1 - r_{t-1}) + β_η × (ν_target - ν_{t-1}) - γ_η × (τ_eng - τ_target)
 
-        Formule linéaire : κ = 1.0 - β × I
+        TROIS CAPTEURS:
+        1. r_t = θ = D/V_on (thermomètre, cible=1)
+        2. ν_eff = (U_burn+S_burn)/V_on (vitesse circulation, cible=0.20)
+        3. τ_eng = U_staké/U (taux engagement, cible=0.35)
+
+        PRINCIPE:
+        - η augmente si: r < 1 (sous-investissement) OU ν < cible (léthargie)
+        - η diminue si: τ_eng > cible (sacrifice excessif du présent)
+
+        COEFFICIENTS (§3.3.1):
+        - α_η = 0.3 (thermomètre, poids modéré)
+        - β_η = 0.4 (vitesse, poids le plus fort car mesure activité réelle)
+        - γ_η = 0.2 (engagement, poids faible car indicateur social secondaire)
 
         Args:
-            indicator: Indicateur centré I = θ - 1
+            r_t: Thermomètre actuel θ = D/V_on
+            nu_eff: Vitesse de circulation actuelle
+            tau_eng: Taux d'engagement actuel
 
         Returns:
-            Valeur cible de κ (bornée dans [kappa_min, kappa_max])
+            Δη (variation de eta, bornée dans [-0.15, +0.15])
         """
-        kappa_raw = 1.0 - self.kappa_beta * indicator
-        kappa_target = np.clip(kappa_raw, self.kappa_min, self.kappa_max)
-        return float(kappa_target)
+        # Contributions des trois capteurs
+        contrib_thermo = self.alpha_eta * (1.0 - r_t)  # + si r < 1 (sous-investissement)
+        contrib_vitesse = self.beta_eta * (self.nu_target - nu_eff)  # + si ν < cible (léthargie)
+        contrib_engagement = -self.gamma_eta * (tau_eng - self.tau_target)  # - si τ > cible (sacrifice)
 
-    def compute_eta_target(self, indicator: float) -> float:
+        # Somme pondérée
+        delta_eta = contrib_thermo + contrib_vitesse + contrib_engagement
+
+        # Contrainte de variation maximale: |Δη| ≤ 0.15 (THÉORIE §3.3.1)
+        delta_eta = np.clip(delta_eta, -self.max_delta_eta, self.max_delta_eta)
+
+        return float(delta_eta)
+
+    def compute_delta_kappa(self, r_t: float, nu_eff: float, tau_eng: float) -> float:
         """
-        Calcule la valeur cible de η (eta) selon l'indicateur I = θ - 1.
+        Calcule la VARIATION Δκ selon le système tri-capteur (THÉORIE §3.3.1).
 
-        PRINCIPE CONTRACYCLIQUE:
-        - I > 0 (θ > 1, surchauffe) → η < 1 → freine combustion/production
-        - I < 0 (θ < 1, sous-régime) → η > 1 → stimule combustion/production
-        - I = 0 (θ = 1, équilibre) → η = 1 → neutre
+        FORMULE THÉORIQUE (Iris_proto_complet.md §3.3.1):
+        Δκ_t = +α_κ × (ν_target - ν_{t-1}) - β_κ × (τ_eng - τ_target) + γ_κ × (1 - r_{t-1})
 
-        Formule linéaire : η = 1.0 - α × I
+        PRINCIPE:
+        - κ augmente si: ν < cible (besoin liquidité pour ranimer) OU r < 1 (sous-régime)
+        - κ diminue si: τ_eng > cible (protéger pouvoir d'achat présent) OU r > 1 (surchauffe)
+
+        COEFFICIENTS (§3.3.1):
+        - α_κ = 0.4 (vitesse, poids le plus fort car κ répond prioritairement à la circulation)
+        - β_κ = 0.3 (engagement, poids modéré pour protection sociale)
+        - γ_κ = 0.2 (thermomètre, poids faible)
 
         Args:
-            indicator: Indicateur centré I = θ - 1
+            r_t: Thermomètre actuel θ = D/V_on
+            nu_eff: Vitesse de circulation actuelle
+            tau_eng: Taux d'engagement actuel
 
         Returns:
-            Valeur cible de η (bornée dans [eta_min, eta_max])
+            Δκ (variation de kappa, bornée dans [-0.15, +0.15])
         """
-        eta_raw = 1.0 - self.eta_alpha * indicator
-        eta_target = np.clip(eta_raw, self.eta_min, self.eta_max)
-        return float(eta_target)
+        # Contributions des trois capteurs
+        contrib_vitesse = self.alpha_kappa * (self.nu_target - nu_eff)  # + si ν < cible
+        contrib_engagement = -self.beta_kappa * (tau_eng - self.tau_target)  # - si τ > cible
+        contrib_thermo = self.gamma_kappa * (1.0 - r_t)  # + si r < 1
 
-    def update_kappa(self, thermometer: float, target: float = 1.0) -> None:
+        # Somme pondérée
+        delta_kappa = contrib_vitesse + contrib_engagement + contrib_thermo
+
+        # Contrainte de variation maximale: |Δκ| ≤ 0.15 (THÉORIE §3.3.1)
+        delta_kappa = np.clip(delta_kappa, -self.max_delta_kappa, self.max_delta_kappa)
+
+        return float(delta_kappa)
+
+    def update_kappa(self, r_t: float, nu_eff: float, tau_eng: float) -> None:
         """
-        Met à jour κ (kappa) avec lissage temporel.
+        Met à jour κ (kappa) avec système tri-capteur (CORRECTION A).
 
-        Applique un lissage exponentiel (EMA) pour éviter les oscillations:
-        κ(t+1) = (1 - α) × κ(t) + α × κ_target
+        CHANGEMENT MAJEUR: Utilise compute_delta_kappa() qui prend 3 capteurs
+        au lieu de l'ancien système mono-capteur basé uniquement sur θ.
 
         Args:
-            thermometer: Thermomètre actuel θ
-            target: Cible du thermomètre (défaut: 1.0)
+            r_t: Thermomètre actuel θ = D/V_on
+            nu_eff: Vitesse de circulation actuelle
+            tau_eng: Taux d'engagement actuel
         """
-        # Calcul de l'indicateur centré
-        indicator = thermometer - target
+        # Calcul de la variation Δκ (tri-capteur)
+        delta_kappa = self.compute_delta_kappa(r_t, nu_eff, tau_eng)
 
-        # Calcul de la cible
-        kappa_target = self.compute_kappa_target(indicator)
+        # Application de la variation
+        self.kappa += delta_kappa
 
-        # Lissage temporel
-        smoothing = self.kappa_smoothing
-        self.kappa = (1.0 - smoothing) * self.kappa + smoothing * kappa_target
+        # Application des bornes strictes [0.7, 1.3]
+        self.kappa = float(np.clip(self.kappa, self.kappa_min, self.kappa_max))
 
         # Enregistrement historique
         self.kappa_history.append(self.kappa)
         if len(self.kappa_history) > 100:
             self.kappa_history.pop(0)
 
-        # Application des bornes (sécurité)
-        self.kappa = float(np.clip(self.kappa, self.kappa_min, self.kappa_max))
-
-    def update_eta(self, thermometer: float, target: float = 1.0) -> None:
+    def update_eta(self, r_t: float, nu_eff: float, tau_eng: float) -> None:
         """
-        Met à jour η (eta) avec lissage temporel.
+        Met à jour η (eta) avec système tri-capteur (CORRECTION A).
 
-        Applique un lissage exponentiel (EMA) pour éviter les oscillations:
-        η(t+1) = (1 - α) × η(t) + α × η_target
+        CHANGEMENT MAJEUR: Utilise compute_delta_eta() qui prend 3 capteurs
+        au lieu de l'ancien système mono-capteur basé uniquement sur θ.
 
         Args:
-            thermometer: Thermomètre actuel θ
-            target: Cible du thermomètre (défaut: 1.0)
+            r_t: Thermomètre actuel θ = D/V_on
+            nu_eff: Vitesse de circulation actuelle
+            tau_eng: Taux d'engagement actuel
         """
-        # Calcul de l'indicateur centré
-        indicator = thermometer - target
+        # Calcul de la variation Δη (tri-capteur)
+        delta_eta = self.compute_delta_eta(r_t, nu_eff, tau_eng)
 
-        # Calcul de la cible
-        eta_target = self.compute_eta_target(indicator)
+        # Application de la variation
+        self.eta += delta_eta
 
-        # Lissage temporel
-        smoothing = self.eta_smoothing
-        self.eta = (1.0 - smoothing) * self.eta + smoothing * eta_target
+        # Application des bornes strictes [0.7, 1.3]
+        self.eta = float(np.clip(self.eta, self.eta_min, self.eta_max))
 
         # Enregistrement historique
         self.eta_history.append(self.eta)
         if len(self.eta_history) > 100:
             self.eta_history.pop(0)
-
-        # Application des bornes (sécurité)
-        self.eta = float(np.clip(self.eta, self.eta_min, self.eta_max))
 
     def apply_amortization(self, time_scale: str = "months") -> float:
         """

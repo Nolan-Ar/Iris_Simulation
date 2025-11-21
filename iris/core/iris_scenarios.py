@@ -943,6 +943,306 @@ class ScenarioRunner:
 
         return economy
 
+    def run_thermodynamic_underheat(self, steps: int = 600) -> IRISEconomy:
+        """
+        ÉTAPE 3 - SCÉNARIO THERMODYNAMIQUE 1 : SOUS-CHAUFFE
+
+        État initial : θ < 1 (D/V_on < 1)
+        Situation : Sous-régime, économie léthargique, besoin de stimulation
+
+        Attente RAD :
+        - κ doit augmenter (> 1) → plus de liquidité injectée
+        - η doit augmenter (> 1) → productivité stimulée
+        - θ doit converger vers 1.0
+
+        Méthode :
+        - Démarrage normal (θ ≈ 1)
+        - Choc de destruction de D à t=50 → θ descend brutalement
+        - RAD doit détecter sous-chauffe et stimuler
+
+        Args:
+            steps: Durée de simulation (50 ans = 600 steps)
+
+        Returns:
+            Économie après simulation
+        """
+        print("\n" + "="*70)
+        print("SCÉNARIO THERMODYNAMIQUE 1 : SOUS-CHAUFFE (θ < 1)")
+        print("="*70)
+        print("État initial : Sous-régime économique (D < V_on)")
+        print("Objectif : Vérifier que le RAD stimule (κ ↑, η ↑) et θ → 1")
+        print("="*70)
+
+        economy = IRISEconomy(
+            initial_agents=self.n_agents,
+            enable_demographics=True,
+            enable_catastrophes=False,  # Pas de perturbations aléatoires
+            enable_business_combustion=True,
+            enable_dynamic_business=True,
+            enable_chambre_relance=True,
+            seed=42  # Reproductibilité
+        )
+
+        print(f"\n📊 État initial :")
+        print(f"  θ initial : {economy.thermometer():.4f}")
+        print(f"  κ initial : {economy.rad.kappa:.4f}")
+        print(f"  η initial : {economy.rad.eta:.4f}")
+
+        # Phase 1 : Équilibre initial (50 steps)
+        print(f"\n⏳ Phase 1 : Équilibre initial (50 mois)...")
+        for _ in range(50):
+            economy.step(n_transactions=10)
+
+        print(f"  θ après phase 1 : {economy.thermometer():.4f}")
+
+        # Phase 2 : CHOC DE SOUS-CHAUFFE - Réduction brutale de D
+        print(f"\n💥 Phase 2 : CHOC - Destruction de 40% de D (création sous-chauffe)...")
+        D_before = economy.rad.total_D()
+        economy.rad.D_materielle *= 0.6
+        economy.rad.D_contractuelle *= 0.6
+        economy.rad.D_services *= 0.6
+        D_after = economy.rad.total_D()
+
+        theta_post_shock = economy.thermometer()
+        print(f"  D avant choc : {D_before:.2f}")
+        print(f"  D après choc : {D_after:.2f} (-40%)")
+        print(f"  θ après choc : {theta_post_shock:.4f} << 1.0 (SOUS-CHAUFFE)")
+
+        # Phase 3 : Régulation RAD (550 steps restants)
+        print(f"\n⏳ Phase 3 : Régulation RAD ({steps - 50} mois)...")
+        print(f"  Attente : κ ↑ et η ↑ pour stimuler l'économie")
+
+        for i in range(steps - 50):
+            economy.step(n_transactions=10)
+
+            # Affichage tous les 120 steps (10 ans)
+            if (i + 1) % 120 == 0:
+                years = (i + 1) // 12
+                theta = economy.thermometer()
+                kappa = economy.rad.kappa
+                eta = economy.rad.eta
+                print(f"  +{years} ans : θ={theta:.4f}, κ={kappa:.4f}, η={eta:.4f}")
+
+        # Résultats finaux
+        print(f"\n📈 RÉSULTATS FINAUX (SOUS-CHAUFFE) :")
+        theta_final = economy.thermometer()
+        kappa_final = economy.rad.kappa
+        eta_final = economy.rad.eta
+
+        print(f"  θ final : {theta_final:.4f} (cible: 1.0)")
+        print(f"  κ final : {kappa_final:.4f} (stimulation: κ > 1.0)")
+        print(f"  η final : {eta_final:.4f} (stimulation: η > 1.0)")
+
+        # Validation
+        if 0.9 <= theta_final <= 1.1:
+            print(f"  ✓ Régulation réussie : θ revenu à l'équilibre")
+        else:
+            print(f"  ✗ Régulation instable : θ = {theta_final:.4f}")
+
+        if kappa_final > 1.0 or eta_final > 1.0:
+            print(f"  ✓ Stimulation active détectée")
+
+        print("="*70 + "\n")
+
+        self.results['underheat'] = economy.history
+        return economy
+
+    def run_thermodynamic_normal(self, steps: int = 600) -> IRISEconomy:
+        """
+        ÉTAPE 3 - SCÉNARIO THERMODYNAMIQUE 2 : NORMAL (ÉQUILIBRE)
+
+        État initial : θ ≈ 1 (D/V_on ≈ 1)
+        Situation : Équilibre thermodynamique stable
+
+        Attente RAD :
+        - κ oscille autour de 1.0 (pas de correction forte)
+        - η oscille autour de 1.0 (production normale)
+        - θ reste proche de 1.0 (±10%)
+
+        Méthode :
+        - Démarrage normal (θ ≈ 1)
+        - Pas de chocs majeurs
+        - Petites perturbations naturelles (démographie)
+        - RAD doit maintenir l'équilibre
+
+        Args:
+            steps: Durée de simulation (50 ans = 600 steps)
+
+        Returns:
+            Économie après simulation
+        """
+        print("\n" + "="*70)
+        print("SCÉNARIO THERMODYNAMIQUE 2 : NORMAL (θ ≈ 1)")
+        print("="*70)
+        print("État initial : Équilibre thermodynamique (D ≈ V_on)")
+        print("Objectif : Vérifier que le RAD maintient θ ≈ 1 sans dérive")
+        print("="*70)
+
+        economy = IRISEconomy(
+            initial_agents=self.n_agents,
+            enable_demographics=True,
+            enable_catastrophes=False,
+            enable_business_combustion=True,
+            enable_dynamic_business=True,
+            enable_chambre_relance=True,
+            seed=42
+        )
+
+        print(f"\n📊 État initial :")
+        print(f"  θ initial : {economy.thermometer():.4f}")
+        print(f"  κ initial : {economy.rad.kappa:.4f}")
+        print(f"  η initial : {economy.rad.eta:.4f}")
+
+        print(f"\n⏳ Simulation en cours ({steps // 12} ans = {steps} mois)...")
+        print(f"  Aucun choc appliqué - évolution naturelle")
+
+        for i in range(steps):
+            economy.step(n_transactions=10)
+
+            # Affichage tous les 120 steps (10 ans)
+            if (i + 1) % 120 == 0:
+                years = (i + 1) // 12
+                theta = economy.thermometer()
+                kappa = economy.rad.kappa
+                eta = economy.rad.eta
+                print(f"  +{years} ans : θ={theta:.4f}, κ={kappa:.4f}, η={eta:.4f}")
+
+        # Résultats finaux
+        print(f"\n📈 RÉSULTATS FINAUX (NORMAL) :")
+        theta_final = economy.thermometer()
+        kappa_final = economy.rad.kappa
+        eta_final = economy.rad.eta
+
+        # Calcul de la stabilité de θ
+        theta_history = economy.history.get('theta', [])
+        if len(theta_history) > 0:
+            theta_mean = np.mean(theta_history[-120:])  # Moyenne sur dernier an
+            theta_std = np.std(theta_history[-120:])
+            print(f"  θ final : {theta_final:.4f} (cible: 1.0)")
+            print(f"  θ moyen (dernier an) : {theta_mean:.4f}")
+            print(f"  θ écart-type : {theta_std:.4f}")
+
+        print(f"  κ final : {kappa_final:.4f} (équilibre: κ ≈ 1.0)")
+        print(f"  η final : {eta_final:.4f} (équilibre: η ≈ 1.0)")
+
+        # Validation
+        if 0.8 <= theta_final <= 1.2:
+            print(f"  ✓ Équilibre maintenu : θ ∈ [0.8, 1.2]")
+        else:
+            print(f"  ✗ Dérive détectée : θ = {theta_final:.4f}")
+
+        if 0.8 <= kappa_final <= 1.2 and 0.8 <= eta_final <= 1.2:
+            print(f"  ✓ Régulation stable : κ, η proches de 1.0")
+
+        print("="*70 + "\n")
+
+        self.results['normal'] = economy.history
+        return economy
+
+    def run_thermodynamic_overheat(self, steps: int = 600) -> IRISEconomy:
+        """
+        ÉTAPE 3 - SCÉNARIO THERMODYNAMIQUE 3 : SURCHAUFFE
+
+        État initial : θ > 1 (D/V_on > 1)
+        Situation : Surchauffe économique, sur-investissement, besoin de freinage
+
+        Attente RAD :
+        - κ doit diminuer (< 1) → moins de liquidité injectée
+        - η doit diminuer (< 1) → productivité freinée
+        - θ doit converger vers 1.0
+
+        Méthode :
+        - Démarrage normal (θ ≈ 1)
+        - Choc d'injection de D à t=50 → θ monte brutalement
+        - RAD doit détecter surchauffe et freiner
+
+        Args:
+            steps: Durée de simulation (50 ans = 600 steps)
+
+        Returns:
+            Économie après simulation
+        """
+        print("\n" + "="*70)
+        print("SCÉNARIO THERMODYNAMIQUE 3 : SURCHAUFFE (θ > 1)")
+        print("="*70)
+        print("État initial : Surchauffe économique (D > V_on)")
+        print("Objectif : Vérifier que le RAD freine (κ ↓, η ↓) et θ → 1")
+        print("="*70)
+
+        economy = IRISEconomy(
+            initial_agents=self.n_agents,
+            enable_demographics=True,
+            enable_catastrophes=False,
+            enable_business_combustion=True,
+            enable_dynamic_business=True,
+            enable_chambre_relance=True,
+            seed=42
+        )
+
+        print(f"\n📊 État initial :")
+        print(f"  θ initial : {economy.thermometer():.4f}")
+        print(f"  κ initial : {economy.rad.kappa:.4f}")
+        print(f"  η initial : {economy.rad.eta:.4f}")
+
+        # Phase 1 : Équilibre initial (50 steps)
+        print(f"\n⏳ Phase 1 : Équilibre initial (50 mois)...")
+        for _ in range(50):
+            economy.step(n_transactions=10)
+
+        print(f"  θ après phase 1 : {economy.thermometer():.4f}")
+
+        # Phase 2 : CHOC DE SURCHAUFFE - Injection brutale de D
+        print(f"\n💥 Phase 2 : CHOC - Injection de +60% de D (création surchauffe)...")
+        D_before = economy.rad.total_D()
+        economy.rad.D_materielle *= 1.6
+        economy.rad.D_contractuelle *= 1.6
+        economy.rad.D_services *= 1.6
+        D_after = economy.rad.total_D()
+
+        theta_post_shock = economy.thermometer()
+        print(f"  D avant choc : {D_before:.2f}")
+        print(f"  D après choc : {D_after:.2f} (+60%)")
+        print(f"  θ après choc : {theta_post_shock:.4f} >> 1.0 (SURCHAUFFE)")
+
+        # Phase 3 : Régulation RAD (550 steps restants)
+        print(f"\n⏳ Phase 3 : Régulation RAD ({steps - 50} mois)...")
+        print(f"  Attente : κ ↓ et η ↓ pour freiner l'économie")
+
+        for i in range(steps - 50):
+            economy.step(n_transactions=10)
+
+            # Affichage tous les 120 steps (10 ans)
+            if (i + 1) % 120 == 0:
+                years = (i + 1) // 12
+                theta = economy.thermometer()
+                kappa = economy.rad.kappa
+                eta = economy.rad.eta
+                print(f"  +{years} ans : θ={theta:.4f}, κ={kappa:.4f}, η={eta:.4f}")
+
+        # Résultats finaux
+        print(f"\n📈 RÉSULTATS FINAUX (SURCHAUFFE) :")
+        theta_final = economy.thermometer()
+        kappa_final = economy.rad.kappa
+        eta_final = economy.rad.eta
+
+        print(f"  θ final : {theta_final:.4f} (cible: 1.0)")
+        print(f"  κ final : {kappa_final:.4f} (freinage: κ < 1.0)")
+        print(f"  η final : {eta_final:.4f} (freinage: η < 1.0)")
+
+        # Validation
+        if 0.9 <= theta_final <= 1.1:
+            print(f"  ✓ Régulation réussie : θ revenu à l'équilibre")
+        else:
+            print(f"  ✗ Régulation instable : θ = {theta_final:.4f}")
+
+        if kappa_final < 1.0 or eta_final < 1.0:
+            print(f"  ✓ Freinage actif détecté")
+
+        print("="*70 + "\n")
+
+        self.results['overheat'] = economy.history
+        return economy
+
 
 def run_full_analysis(n_agents: int = 100, output_dir: str = "results",
                      steps: int = 1000, shock_time: int = 500, seed: int = None):
