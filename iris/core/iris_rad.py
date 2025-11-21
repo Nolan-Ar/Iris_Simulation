@@ -8,11 +8,12 @@ Le RAD est le cœur de la régulation IRIS. Il maintient l'équilibre
 thermodynamique via le thermomètre θ = D / V_on et ajuste les paramètres
 κ (kappa) et η (eta) selon la tension mesurée.
 
-COMPOSANTES DE D (Miroir Thermométrique):
-- D_materielle : Cristallisation (conversions U→V, actifs immobilisés)
-- D_contractuelle : NFT financiers (titres productifs entreprises)
-- D_consommation : Consommation démographique (D générée par la vie)
-- D_catastrophes : Destructions de valeur (événements catastrophiques)
+COMPOSANTES DE D (Miroir Thermométrique) - THÉORIE §1.1.3 :
+- D_materielle : Biens et immobilisations (actifs physiques)
+- D_services : Flux d'entretien et services (maintenance continue)
+- D_contractuelle : Titres à promesse productive (NFT financiers)
+- D_engagement : Staking et opérations de mise en réserve
+- D_regulatrice : Chambre de Relance (redistribution, RU)
 
 RÉGULATION:
 - θ = D / V_on (thermomètre économique)
@@ -48,11 +49,12 @@ class RADState:
     2. Calcul du thermomètre θ = D / V_on
     3. Ajustement des paramètres κ (kappa) et η (eta)
 
-    COMPOSANTES DE D:
-    - D_materielle : Actifs immobilisés (conversions U→V, cristallisation)
-    - D_contractuelle : Titres productifs (NFT financiers entreprises)
-    - D_consommation : Consommation démographique (vie des agents)
-    - D_catastrophes : Destructions de valeur (catastrophes)
+    COMPOSANTES DE D (THÉORIE §1.1.3):
+    - D_materielle : Biens et immobilisations (actifs physiques)
+    - D_services : Flux d'entretien et services (maintenance)
+    - D_contractuelle : Titres à promesse productive (NFT financiers)
+    - D_engagement : Staking et mise en réserve
+    - D_regulatrice : Chambre de Relance (redistribution, RU)
 
     PARAMÈTRES DE RÉGULATION:
     - kappa (κ) : conversion V→U (bornes: [0.5, 2.0])
@@ -60,32 +62,41 @@ class RADState:
     - delta_m : amortissement mensuel de D (≈ 0.104%/mois ≈ 1.25%/an)
     """
 
-    # === COMPOSANTES DE D (MIROIR THERMOMÉTRIQUE) ===
-    D_materielle: float = 0.0       # Cristallisation (U→V)
-    D_contractuelle: float = 0.0    # NFT financiers
-    D_consommation: float = 0.0     # Consommation démographique
-    D_catastrophes: float = 0.0     # Destructions de valeur
+    # === COMPOSANTES DE D (MIROIR THERMOMÉTRIQUE) - THÉORIE §1.1.3 ===
+    D_materielle: float = 0.0       # Biens et immobilisations
+    D_services: float = 0.0         # Flux d'entretien
+    D_contractuelle: float = 0.0    # Titres à promesse productive (NFT financiers)
+    D_engagement: float = 0.0       # Staking et mise en réserve
+    D_regulatrice: float = 0.0      # Chambre de Relance
 
     # === PARAMÈTRES DE RÉGULATION ===
     kappa: float = 1.0              # Coefficient conversion V→U
     eta: float = 1.0                # Coefficient rendement combustion S+U→V
 
-    # Bornes de κ (kappa) - CORRECTION C: bornes plus strictes [0.7, 1.3]
-    kappa_min: float = 0.7
-    kappa_max: float = 1.3
+    # Bornes de κ (kappa) - THÉORIE §3.1.2: [0.5, 2.0]
+    kappa_min: float = 0.5
+    kappa_max: float = 2.0
 
-    # Bornes de η (eta) - CORRECTION C: bornes plus strictes [0.7, 1.3]
-    eta_min: float = 0.7
-    eta_max: float = 1.3
+    # Bornes de η (eta) - THÉORIE §3.1.2: [0.5, 2.0]
+    eta_min: float = 0.5
+    eta_max: float = 2.0
 
-    # === CAPTEURS (SENSORS) - SYSTÈME TRI-CAPTEUR (CORRECTION A) ===
+    # === CAPTEURS (SENSORS) - SYSTÈME TRI-CAPTEUR (THÉORIE §3.3.2) ===
     # Stockage des valeurs actuelles des capteurs
-    nu_eff: float = 0.20         # Vitesse circulation (U_burn+S_burn)/V_on
+    nu_eff: float = 0.20         # Vélocité effective (U_burn+S_burn)/V_on_prev
     tau_eng: float = 0.35        # Taux engagement U_staké/U
 
     # Cibles des capteurs (THÉORIE §3.3.2)
     nu_target: float = 0.20      # Cible vitesse circulation (20%)
     tau_target: float = 0.35     # Cible taux engagement (35%)
+
+    # === TRACKING DES FLUX (pour calcul des capteurs) ===
+    # Ces valeurs doivent être mises à jour à chaque cycle
+    U_burn: float = 0.0          # U brûlé pendant le cycle actuel
+    S_burn: float = 0.0          # S brûlé pendant le cycle actuel
+    U_stake: float = 0.0         # U mis en staking
+    U_total: float = 0.0         # U total en circulation
+    V_on_previous: float = 0.0   # V_on du cycle précédent
 
     # Coefficients tri-capteur (THÉORIE §3.3.1)
     # Pour Δη: α_η=0.3, β_η=0.4, γ_η=0.2
@@ -115,15 +126,17 @@ class RADState:
         """
         Calcule la dette thermométrique totale D.
 
-        D = D_materielle + D_contractuelle + D_consommation + D_catastrophes
+        D = D_materielle + D_services + D_contractuelle + D_engagement + D_regulatrice
 
-        D n'est PAS une dette juridique, c'est un indicateur de régulation.
+        D n'est PAS une dette juridique, c'est un indicateur de régulation
+        thermodynamique (THÉORIE §1.1.3).
         """
         return (
             self.D_materielle +
+            self.D_services +
             self.D_contractuelle +
-            self.D_consommation +
-            self.D_catastrophes
+            self.D_engagement +
+            self.D_regulatrice
         )
 
     def add_D_materielle(self, amount: float) -> None:
@@ -146,25 +159,35 @@ class RADState:
         validate_non_negative(amount, "D_contractuelle")
         self.D_contractuelle += amount
 
-    def add_D_consommation(self, amount: float) -> None:
+    def add_D_services(self, amount: float) -> None:
         """
-        Ajoute de la dette de consommation (démographie).
+        Ajoute de la dette de services (flux d'entretien).
 
         Args:
             amount: Montant à ajouter
         """
-        validate_non_negative(amount, "D_consommation")
-        self.D_consommation += amount
+        validate_non_negative(amount, "D_services")
+        self.D_services += amount
 
-    def add_D_catastrophes(self, amount: float) -> None:
+    def add_D_engagement(self, amount: float) -> None:
         """
-        Ajoute de la dette de catastrophes (destructions).
+        Ajoute de la dette d'engagement (staking).
 
         Args:
             amount: Montant à ajouter
         """
-        validate_non_negative(amount, "D_catastrophes")
-        self.D_catastrophes += amount
+        validate_non_negative(amount, "D_engagement")
+        self.D_engagement += amount
+
+    def add_D_regulatrice(self, amount: float) -> None:
+        """
+        Ajoute de la dette régulatrice (Chambre de Relance).
+
+        Args:
+            amount: Montant à ajouter
+        """
+        validate_non_negative(amount, "D_regulatrice")
+        self.D_regulatrice += amount
 
     def compute_thermometer(self, V_on: float) -> float:
         """
@@ -190,6 +213,55 @@ class RADState:
             self.theta_history.pop(0)
 
         return theta
+
+    def calculate_nu_eff(self, U_burn: float, S_burn: float, V_on_prev: float) -> float:
+        """
+        Calcule ν_eff : vélocité effective de circulation (THÉORIE §3.3.2)
+
+        FORMULE THÉORIQUE :
+        ν_eff = (U_burn + S_burn) / V_{t-1}^{on}
+
+        Mesure la vigueur de l'activité économique réelle via les combustions.
+
+        Args:
+            U_burn: Montant de U brûlé pendant le cycle
+            S_burn: Montant de S brûlé pendant le cycle
+            V_on_prev: Valeur vivante du cycle précédent
+
+        Returns:
+            Vélocité effective ν_eff
+        """
+        if V_on_prev > 0:
+            nu_eff = (U_burn + S_burn) / V_on_prev
+        else:
+            nu_eff = 0.0
+
+        self.nu_eff = nu_eff
+        return nu_eff
+
+    def calculate_tau_eng(self, U_stake: float, U_total: float) -> float:
+        """
+        Calcule τ_eng : taux d'engagement (staking) (THÉORIE §3.3.2)
+
+        FORMULE THÉORIQUE :
+        τ_eng = U_staké / U
+
+        Mesure la part du RU engagée en staking.
+
+        Args:
+            U_stake: Montant de U mis en staking
+            U_total: Montant total de U en circulation
+
+        Returns:
+            Taux d'engagement τ_eng
+        """
+        if U_total > 0:
+            tau_eng = U_stake / U_total
+        else:
+            tau_eng = 0.0
+
+        self.tau_eng = tau_eng
+        return tau_eng
 
     def compute_delta_eta(self, r_t: float, nu_eff: float, tau_eng: float) -> float:
         """
@@ -354,9 +426,10 @@ class RADState:
 
         # Application proportionnelle sur toutes les composantes
         self.D_materielle *= ratio
+        self.D_services *= ratio
         self.D_contractuelle *= ratio
-        self.D_consommation *= ratio
-        self.D_catastrophes *= ratio
+        self.D_engagement *= ratio
+        self.D_regulatrice *= ratio
 
         logger.debug(f"Amortized D: {amort:.2f} ({delta*100:.4f}% of {total_D_before:.2f})")
 
@@ -369,9 +442,10 @@ class RADState:
         return {
             "total_D": total_D,
             "D_materielle": self.D_materielle,
+            "D_services": self.D_services,
             "D_contractuelle": self.D_contractuelle,
-            "D_consommation": self.D_consommation,
-            "D_catastrophes": self.D_catastrophes,
+            "D_engagement": self.D_engagement,
+            "D_regulatrice": self.D_regulatrice,
             "kappa": self.kappa,
             "eta": self.eta,
             "theta_mean": float(np.mean(self.theta_history)) if self.theta_history else 1.0,

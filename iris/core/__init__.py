@@ -40,14 +40,9 @@ Author: Arnault Nolan
 """
 
 # V2 Core Modules
-from .iris_model import (
-    IRISEconomy,
-    Agent,
-    Asset,
-    AssetType,
-    DebtComponent,
-    RADState,
-)
+from .iris_types import Agent, Asset, AssetType, DebtComponent
+from .iris_rad import RADState
+from .iris_model import IRISEconomy, STEPS_PER_YEAR
 from .iris_demographics import Demographics
 from .iris_entreprises import (
     EntrepriseManager,
@@ -61,7 +56,8 @@ from .iris_comptes_entreprises import (
     FluxEntreprise,
     BusinessType,
 )
-from .iris_rad import RADState as RAD
+# RADState déjà importé ci-dessus, alias pour compatibilité
+RAD = RADState
 from .iris_oracle import (
     Oracle,
     NFTMetadata,
@@ -94,11 +90,13 @@ from .iris_scenarios import ScenarioRunner
 __all__ = [
     # Main model
     'IRISEconomy',
+    'STEPS_PER_YEAR',
     'Agent',
     'Asset',
     'AssetType',
     'DebtComponent',
     'RADState',
+    'RAD',  # Alias pour RADState
 
     # Core components
     'Demographics',

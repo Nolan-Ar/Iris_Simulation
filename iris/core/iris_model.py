@@ -176,6 +176,10 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Tuple, Optional
 from enum import Enum
 
+# Import types partagés
+from .iris_types import Agent, Asset, AssetType, DebtComponent
+from .iris_rad import RADState
+
 # Import modules IRIS étendus
 from .iris_oracle import Oracle, FluxType, NFTMetadata
 from .iris_chambre_relance import ChambreRelance, OrphanReason
@@ -192,596 +196,18 @@ from .iris_entreprises import EntrepriseManager
 STEPS_PER_YEAR = 12  # 1 step = 1 mois, donc 12 steps = 1 an
 
 
-class AssetType(Enum):
-    """Types d'actifs dans le système IRIS"""
-    IMMOBILIER = "immobilier"
-    MOBILIER = "mobilier"
-    ENTREPRISE = "entreprise"
-    INTELLECTUEL = "intellectuel"
-    SERVICE = "service"
-
-
-class DebtComponent(Enum):
-    """Composantes de la dette thermométrique"""
-    MATERIELLE = "materielle"  # Biens et immobilisations
-    SERVICES = "services"  # Flux d'entretien
-    CONTRACTUELLE = "contractuelle"  # Titres à promesse productive
-    ENGAGEMENT = "engagement"  # Opérations de staking
-    REGULATRICE = "regulatrice"  # Chambre de Relance
-
-
-@dataclass
-class Asset:
-    """
-    Représente un actif dans le système IRIS
-
-    Un actif est un bien réel (terrain, immeuble, entreprise, etc.) qui est
-    ancré dans le système via l'Oracle d'initialisation. Chaque actif génère :
-    - Un Verum (V) : la mémoire de sa valeur
-    - Un miroir thermométrique (D) : l'indicateur de régulation associé
-    - Un NFT fondateur : preuve cryptographique d'existence unique
-    """
-    id: str  # Identifiant unique de l'actif
-    asset_type: AssetType  # Type d'actif (immobilier, mobilier, etc.)
-    real_value: float  # Valeur réelle dans le monde physique (en unités monétaires classiques)
-    V_initial: float = 0.0  # V₀ : Verum d'initialisation (mémoire de valeur IRIS)
-    D_initial: float = 0.0  # D₀ : Miroir thermométrique initial (indicateur de régulation)
-    owner_id: str = ""  # Identifiant du propriétaire
-    nft_hash: str = ""  # Empreinte cryptographique du NFT fondateur (SHA-256)
-    auth_factor: float = 1.0  # Facteur d'authentification (1.0 = source officielle, <1.0 = auto-déclaration)
-    creation_time: int = 0  # Moment de l'ancrage dans le système
-
-    def __post_init__(self):
-        """
-        Initialise V₀ et D₀ selon les règles IRIS
-
-        Principe fondamental : Équilibre initial ΣV₀ = ΣD₀
-        Cette égalité garantit que le thermomètre θ = D/V démarre à 1.0
-        """
-        if self.V_initial == 0.0:
-            # Conversion de la valeur réelle en Verum IRIS
-            # Formule complète : V_IRIS = V_asset × facteur_or × ajustement_thermométrique × auth_factor
-            # Pour simplification dans cette simulation, on utilise directement real_value × auth_factor
-            self.V_initial = self.real_value * self.auth_factor
-
-            # Création du miroir thermométrique : D₀ = V₀
-            # Ce miroir n'est PAS une dette exigible, mais un indicateur de régulation
-            # Il permet au RAD de mesurer la tension thermométrique du système
-            self.D_initial = self.V_initial
-
-
-@dataclass
-class Agent:
-    """
-    Représente un agent économique dans le système IRIS
-
-    Un agent est une personne ou une entité qui possède :
-    - Des actifs réels (ancré dans le système)
-    - Un solde V (Verum) : mémoire de valeur, patrimoine ancré
-    - Un solde U (Usage) : monnaie d'usage, liquidité pour transactions
-    - Un score de contribution : mesure des actes prouvés
-    - Des biens de consommation accumulés (consumables)
-
-    L'agent peut :
-    - Convertir V en U (activer son patrimoine)
-    - Reconvertir U en V (épargner, investir)
-    - Effectuer des transactions en U
-    - Recevoir le revenu universel
-    """
-    id: str  # Identifiant unique de l'agent
-    V_balance: float = 0.0  # Solde en Verum (patrimoine, mémoire de valeur)
-    U_balance: float = 0.0  # Solde en Usage (liquidité, monnaie de transaction)
-    assets: List[Asset] = field(default_factory=list)  # Liste des actifs possédés
-    contribution_score: float = 0.0  # Score de contribution prouvée (pour gouvernance future)
-    consumables: float = 0.0  # Biens de consommation accumulés (lifetime consumption D)
-
-    def add_asset(self, asset: Asset) -> None:
-        """
-        Ajoute un actif et met à jour le solde V
-
-        Quand un agent ancre un nouvel actif :
-        - L'actif est ajouté à sa liste
-        - Son V_balance augmente du V₀ de l'actif
-        - Le système global gagne V₀ en circulation et D₀ dans le RAD
-
-        Args:
-            asset: Actif à ajouter
-        """
-        self.assets.append(asset)
-        self.V_balance += asset.V_initial  # Crédite le Verum d'initialisation
-
-    def remove_asset(self, asset_id: str) -> None:
-        """
-        Retire un actif et met à jour le solde V
-
-        Utilise lors de la destruction d'un actif (catastrophe, etc.)
-        - L'actif est retire de la liste
-        - Le V_balance est reduit du V_initial de l'actif
-
-        Args:
-            asset_id: Identifiant de l'actif à retirer
-        """
-        for i, asset in enumerate(self.assets):
-            if asset.id == asset_id:
-                self.V_balance -= asset.V_initial
-                self.assets.pop(i)
-                break
-
-    def total_wealth(self) -> float:
-        """
-        Richesse totale de l'agent (V + U)
-
-        La richesse totale combine :
-        - V : patrimoine ancré (épargne, actifs)
-        - U : liquidité (argent de poche)
-        Cette somme est utilisée pour calculer le revenu universel
-        """
-        return self.V_balance + self.U_balance
-
-
-@dataclass
-class RADState:
-    """
-    État du Régulateur Automatique Décentralisé (RAD)
-
-    Le RAD est le cœur du système IRIS. C'est un mécanisme autonome
-    qui maintient l'équilibre thermodynamique en ajustant les paramètres
-    du système selon la tension mesurée.
-
-    Analogie : Le RAD joue le rôle d'un thermostat pour l'économie.
-    - Si θ > 1 (trop de demande) → il refroidit (réduit κ)
-    - Si θ < 1 (trop d'offre) → il réchauffe (augmente κ)
-
-    ARCHITECTURE MULTI-COUCHES (Phase C) :
-    - C1 : Régulation continue (κ, η) - chaque cycle
-    - C2 : Régulation profonde (τ, ajustements structurels) - périodique (T cycles)
-    - C3 : Rebalancement d'urgence (D direct) - si |I| > seuil critique
-
-    CAPTEURS DE RÉGULATION :
-    - r_ic : Taux d'inflation/contraction (variation θ)
-    - ν_eff : Vélocité effective (circulation U/V)
-    - τ_eng : Taux d'engagement (staking, D_engagement/D_total)
-
-    Composantes de D (miroir thermométrique sectoriel) :
-    - D_materielle : Biens physiques (terrains, immeubles)
-    - D_services : Flux d'entretien et services
-    - D_contractuelle : Titres et promesses productives
-    - D_engagement : Staking et engagements
-    - D_regulatrice : Chambre de relance (revenu universel)
-    """
-    # Composantes sectorielles du miroir thermométrique D
-    # Chaque composante suit un type spécifique d'actifs/transactions
-    D_materielle: float = 0.0  # Dette thermométrique des biens matériels
-    D_services: float = 0.0  # Dette thermométrique des services
-    D_contractuelle: float = 0.0  # Dette thermométrique des contrats
-    D_engagement: float = 0.0  # Dette thermométrique des engagements
-    D_regulatrice: float = 0.0  # Dette thermométrique de la régulation (RU, dissipation)
-
-    # Paramètres de régulation du système
-    kappa: float = 1.0  # Coefficient de conversion V → U (κ, kappa)
-    eta: float = 1.0  # Coefficient d'efficacité (η, eta) - NOUVEAU Phase C
-    T_period: int = 12  # Périodicité de régulation profonde (12 cycles = 1 an)
-    dissipation_rate: float = 0.0  # Supprimé : friction non-IRIS (était 0.02)
-
-    # Amortissement global de la dette thermométrique D (conforme document IRIS)
-    delta_m: float = 0.001041666  # Amortissement mensuel ≈ 0.104%/mois ≈ 1.25%/an
-
-    # CORRECTION C: PARAMÈTRES η (ETA) et κ (KAPPA) AVEC BORNES STRICTES [0.7, 1.3]
-    # Bornes de η (rendement combustion S+U→V) - CORRECTION C
-    eta_min: float = 0.7  # Rendement minimum (70%) - borne stricte
-    eta_max: float = 1.3  # Rendement maximum (130%) - borne stricte
-    eta_smoothing: float = 0.15  # Facteur de lissage EMA pour η (évite oscillations)
-
-    # Bornes de κ (conversion V→U) - CORRECTION C
-    kappa_min: float = 0.7  # Conversion minimum (70%) - borne stricte
-    kappa_max: float = 1.3  # Conversion maximum (130%) - borne stricte
-    kappa_smoothing: float = 0.1  # Facteur de lissage EMA pour κ
-
-    # CORRECTION A: SYSTÈME TRI-CAPTEUR (THÉORIE §3.3.1)
-    # Cibles des capteurs
-    nu_target: float = 0.20  # Cible vitesse circulation (20%)
-    tau_target: float = 0.35  # Cible taux engagement (35%)
-
-    # Coefficients tri-capteur pour Δη (THÉORIE §3.3.1)
-    alpha_eta: float = 0.3  # Poids thermomètre dans Δη
-    beta_eta: float = 0.4  # Poids vitesse dans Δη
-    gamma_eta: float = 0.2  # Poids engagement dans Δη
-
-    # Coefficients tri-capteur pour Δκ (THÉORIE §3.3.1)
-    alpha_kappa: float = 0.4  # Poids vitesse dans Δκ
-    beta_kappa: float = 0.3  # Poids engagement dans Δκ
-    gamma_kappa: float = 0.2  # Poids thermomètre dans Δκ
-
-    # Contraintes de variation (THÉORIE §3.3.1)
-    max_delta_eta: float = 0.15  # |Δη| ≤ 0.15 (15% max par cycle)
-    max_delta_kappa: float = 0.15  # |Δκ| ≤ 0.15 (15% max par cycle)
-
-    # Capteurs de régulation (Phase C)
-    r_ic: float = 0.0  # Taux inflation/contraction (variation θ)
-    nu_eff: float = 0.0  # Vélocité effective (circulation)
-    tau_eng: float = 0.0  # Taux engagement (staking)
-
-    # Historique pour calcul capteurs et calibration
-    theta_history: List[float] = field(default_factory=list)
-    eta_history: List[float] = field(default_factory=list)  # Pour smoothing
-    kappa_history: List[float] = field(default_factory=list)  # Pour analyse
-
-    # Seuils activation couches
-    C2_activation_threshold: float = 0.15  # |I| > 15% → active C2
-    C3_activation_threshold: float = 0.30  # |I| > 30% → active C3
-
-    # Compteur de cycles de crise (pour limiter durée intervention C3)
-    C3_crisis_counter: int = 0  # Nombre de cycles consécutifs en mode C3
-    C3_max_duration: int = 5  # Durée maximale d'intervention C3 (5 cycles consécutifs)
-    C3_cooldown_counter: int = 0  # Période de repos après intervention C3
-
-    # Calibration automatique
-    auto_calibration_enabled: bool = True  # Active la calibration automatique
-    calibration_period: int = 50  # Période de recalibration (en cycles)
-    oscillation_tolerance: float = 0.20  # Tolérance d'oscillation de θ (±20%)
-
-    def total_D(self) -> float:
-        """
-        Calcule la dette thermométrique totale D
-
-        D = somme de toutes les composantes sectorielles
-        D est utilisé pour calculer le thermomètre : θ = D/V
-
-        Note : D n'est PAS une dette au sens juridique, c'est un
-        indicateur de régulation (miroir thermométrique)
-        """
-        return (self.D_materielle + self.D_services + self.D_contractuelle +
-                self.D_engagement + self.D_regulatrice)
-
-    def compute_delta_kappa(self, r_t: float, nu_eff: float, tau_eng: float) -> float:
-        """
-        CORRECTION A: Calcule la VARIATION Δκ selon le système tri-capteur
-
-        FORMULE TRI-CAPTEUR (THÉORIE §3.3.1):
-        Δκ_t = α_κ × (ν_target - ν) - β_κ × (τ_eng - τ_target) + γ_κ × (1 - r)
-
-        où:
-        - α_κ = 0.4 : poids de la vitesse de circulation
-        - β_κ = 0.3 : poids de l'engagement
-        - γ_κ = 0.2 : poids du thermomètre
-        - ν_target = 0.20 : cible vitesse (20%)
-        - τ_target = 0.35 : cible engagement (35%)
-
-        Args:
-            r_t: Thermomètre (r = D/V_on, cible = 1.0)
-            nu_eff: Vélocité effective (U/V_on)
-            tau_eng: Taux d'engagement (D_eng/D_total)
-
-        Returns:
-            Variation Δκ (bornée dans [-max_delta_kappa, +max_delta_kappa])
-        """
-        # Contribution de la vitesse de circulation
-        contrib_vitesse = self.alpha_kappa * (self.nu_target - nu_eff)
-
-        # Contribution de l'engagement (signe négatif)
-        contrib_engagement = -self.beta_kappa * (tau_eng - self.tau_target)
-
-        # Contribution du thermomètre
-        contrib_thermo = self.gamma_kappa * (1.0 - r_t)
-
-        # Variation totale
-        delta_kappa = contrib_vitesse + contrib_engagement + contrib_thermo
-
-        # Contrainte de variation maximale
-        delta_kappa = np.clip(delta_kappa, -self.max_delta_kappa, self.max_delta_kappa)
-
-        return float(delta_kappa)
-
-    def update_kappa(self, r_t: float, nu_eff: float, tau_eng: float) -> None:
-        """
-        CORRECTION A: Mise à jour κ (kappa) avec système tri-capteur
-
-        Utilise la formule tri-capteur pour calculer Δκ, puis applique la variation
-        avec contraintes de bornes.
-
-        Formule : Δκ_t = α_κ×(ν_target-ν) - β_κ×(τ_eng-τ_target) + γ_κ×(1-r)
-
-        Args:
-            r_t: Thermomètre (r = D/V_on, cible = 1.0)
-            nu_eff: Vélocité effective (U/V_on, cible = 0.20)
-            tau_eng: Taux d'engagement (D_eng/D_total, cible = 0.35)
-        """
-        # Calcul de la variation Δκ via tri-capteur
-        delta_kappa = self.compute_delta_kappa(r_t, nu_eff, tau_eng)
-
-        # Application de la variation
-        self.kappa += delta_kappa
-
-        # Application des bornes strictes [0.7, 1.3]
-        self.kappa = float(np.clip(self.kappa, self.kappa_min, self.kappa_max))
-
-        # Enregistrement dans l'historique
-        self.kappa_history.append(self.kappa)
-        if len(self.kappa_history) > 100:
-            self.kappa_history.pop(0)
-
-    def compute_delta_eta(self, r_t: float, nu_eff: float, tau_eng: float) -> float:
-        """
-        CORRECTION A: Calcule la VARIATION Δη selon le système tri-capteur
-
-        FORMULE TRI-CAPTEUR (THÉORIE §3.3.1):
-        Δη_t = α_η × (1 - r) + β_η × (ν_target - ν) - γ_η × (τ_eng - τ_target)
-
-        où:
-        - α_η = 0.3 : poids du thermomètre
-        - β_η = 0.4 : poids de la vitesse
-        - γ_η = 0.2 : poids de l'engagement
-        - ν_target = 0.20 : cible vitesse (20%)
-        - τ_target = 0.35 : cible engagement (35%)
-
-        Args:
-            r_t: Thermomètre (r = D/V_on, cible = 1.0)
-            nu_eff: Vélocité effective (U/V_on)
-            tau_eng: Taux d'engagement (D_eng/D_total)
-
-        Returns:
-            Variation Δη (bornée dans [-max_delta_eta, +max_delta_eta])
-        """
-        # Contribution du thermomètre
-        contrib_thermo = self.alpha_eta * (1.0 - r_t)
-
-        # Contribution de la vitesse
-        contrib_vitesse = self.beta_eta * (self.nu_target - nu_eff)
-
-        # Contribution de l'engagement (signe négatif)
-        contrib_engagement = -self.gamma_eta * (tau_eng - self.tau_target)
-
-        # Variation totale
-        delta_eta = contrib_thermo + contrib_vitesse + contrib_engagement
-
-        # Contrainte de variation maximale
-        delta_eta = np.clip(delta_eta, -self.max_delta_eta, self.max_delta_eta)
-
-        return float(delta_eta)
-
-    def update_eta(self, r_t: float, nu_eff: float, tau_eng: float) -> None:
-        """
-        CORRECTION A: Mise à jour η (eta) avec système tri-capteur
-
-        Utilise la formule tri-capteur pour calculer Δη, puis applique la variation
-        avec contraintes de bornes.
-
-        Formule : Δη_t = α_η×(1-r) + β_η×(ν_target-ν) - γ_η×(τ_eng-τ_target)
-
-        Args:
-            r_t: Thermomètre (r = D/V_on, cible = 1.0)
-            nu_eff: Vélocité effective (U/V_on, cible = 0.20)
-            tau_eng: Taux d'engagement (D_eng/D_total, cible = 0.35)
-        """
-        # Calcul de la variation Δη via tri-capteur
-        delta_eta = self.compute_delta_eta(r_t, nu_eff, tau_eng)
-
-        # Application de la variation
-        self.eta += delta_eta
-
-        # Application des bornes strictes [0.7, 1.3]
-        self.eta = float(np.clip(self.eta, self.eta_min, self.eta_max))
-
-        # Enregistrement dans l'historique
-        self.eta_history.append(self.eta)
-        if len(self.eta_history) > 100:
-            self.eta_history.pop(0)
-
-    def calculate_r_ic(self, current_theta: float) -> float:
-        """
-        Calcule r_ic : taux d'inflation/contraction
-
-        r_ic mesure la variation du thermomètre θ entre deux périodes.
-        C'est un indicateur de la pression inflationniste ou déflationniste.
-
-        Formule : r_ic = (θ_t - θ_{t-1}) / θ_{t-1}
-
-        Returns:
-            Taux de variation de θ (positif = inflation, négatif = déflation)
-        """
-        if len(self.theta_history) == 0:
-            self.theta_history.append(current_theta)
-            return 0.0
-
-        last_theta = self.theta_history[-1]
-        if last_theta > 0:
-            r_ic = (current_theta - last_theta) / last_theta
-        else:
-            r_ic = 0.0
-
-        # Mise à jour historique
-        self.theta_history.append(current_theta)
-
-        # Garde seulement les 12 dernières valeurs (1 an)
-        if len(self.theta_history) > 12:
-            self.theta_history.pop(0)
-
-        self.r_ic = r_ic
-        return r_ic
-
-    def calculate_nu_eff(self, total_U: float, V_on: float) -> float:
-        """
-        Calcule ν_eff : vélocité effective de circulation
-
-        ALIGNEMENT THÉORIQUE (Document IRIS) :
-        ν_eff mesure la fluidité de la monnaie d'usage U dans le système,
-        par rapport à la valeur VIVANTE en circulation (V_on).
-
-        Formule (conforme à la théorie) :
-        ν_eff = U / V_on
-
-        Interprétation :
-        - ν_eff élevé : beaucoup de liquidité, économie active
-        - ν_eff faible : liquidité bloquée, patrimoine immobilisé
-
-        Note d'implémentation :
-        Utilise V_on (valeur vivante) au lieu de V total pour refléter
-        la circulation réelle, excluant les immobilisations (NFT, réserves).
-
-        Args:
-            total_U: Total de la monnaie d'usage en circulation
-            V_on: Valeur vivante en circulation (excluant immobilisations)
-
-        Returns:
-            Vélocité effective (ratio U/V_on)
-        """
-        if V_on > 0:
-            nu_eff = total_U / V_on
-        else:
-            nu_eff = 0.0
-
-        self.nu_eff = nu_eff
-        return nu_eff
-
-    def calculate_tau_eng(self) -> float:
-        """
-        Calcule τ_eng : taux d'engagement (staking)
-
-        τ_eng mesure la part de la dette thermométrique issue des engagements
-        (staking, promesses productives, etc.).
-
-        Formule : τ_eng = D_engagement / D_total
-
-        Interprétation :
-        - τ_eng élevé : forte mobilisation des actifs
-        - τ_eng faible : actifs peu engagés
-
-        Returns:
-            Taux d'engagement (0-1)
-        """
-        total_D = self.total_D()
-        if total_D > 0:
-            tau_eng = self.D_engagement / total_D
-        else:
-            tau_eng = 0.0
-
-        self.tau_eng = tau_eng
-        return tau_eng
-
-    def auto_calibrate(self, cycle: int) -> Dict[str, float]:
-        """
-        Calibration automatique des coefficients η et κ selon les oscillations de θ
-
-        OBJECTIF :
-        Ajuste dynamiquement les paramètres de sensibilité (alpha, beta, gamma)
-        pour stabiliser le système et réduire les oscillations du thermomètre.
-
-        PRINCIPE :
-        - Mesure l'amplitude des oscillations de θ sur les N derniers cycles
-        - Si oscillations > tolérance : RÉDUIT la sensibilité (alpha, beta)
-        - Si oscillations < tolérance/2 : AUGMENTE légèrement la sensibilité
-        - Converge vers des paramètres optimaux pour la stabilité
-
-        MÉTHODE :
-        1. Calcule l'écart-type de θ sur les 50 derniers cycles
-        2. Compare à la tolérance cible (oscillation_tolerance)
-        3. Ajuste alpha, beta proportionnellement à l'écart
-
-        FRÉQUENCE :
-        Activé tous les calibration_period cycles (défaut: 50)
-
-        Args:
-            cycle: Numéro de cycle actuel
-
-        Returns:
-            Dictionnaire des ajustements effectués
-        """
-        if not self.auto_calibration_enabled:
-            return {}
-
-        # Ne calibre que périodiquement
-        if cycle % self.calibration_period != 0 or cycle == 0:
-            return {}
-
-        # Besoin d'au moins 20 mesures pour une calibration fiable
-        if len(self.theta_history) < 20:
-            return {}
-
-        # MESURE DES OSCILLATIONS : écart-type de θ
-        theta_recent = np.array(self.theta_history[-50:])  # 50 dernières valeurs
-        theta_mean = np.mean(theta_recent)
-        theta_std = np.std(theta_recent)  # Écart-type = mesure d'oscillation
-
-        # DIAGNOSTIC : oscillations par rapport à la tolérance
-        oscillation_ratio = theta_std / self.oscillation_tolerance
-
-        adjustments = {}
-
-        # CAS 1 : OSCILLATIONS EXCESSIVES (> tolérance)
-        # → Système instable, réduire la sensibilité
-        if oscillation_ratio > 1.2:
-            # Réduction proportionnelle (10% par excès de 20%)
-            reduction_factor = 0.9  # Réduit de 10%
-
-            # Ajuste ETA
-            old_alpha = self.eta_alpha
-            self.eta_alpha *= reduction_factor
-            self.eta_alpha = max(0.1, min(1.0, self.eta_alpha))  # Bornes [0.1, 1.0]
-            adjustments['eta_alpha'] = self.eta_alpha - old_alpha
-
-            # Ajuste KAPPA
-            old_beta = self.kappa_beta
-            self.kappa_beta *= reduction_factor
-            self.kappa_beta = max(0.1, min(1.0, self.kappa_beta))  # Bornes [0.1, 1.0]
-            adjustments['kappa_beta'] = self.kappa_beta - old_beta
-
-            # Augmente le smoothing (plus d'inertie)
-            old_smooth = self.eta_smoothing
-            self.eta_smoothing = min(0.3, self.eta_smoothing * 1.1)
-            adjustments['eta_smoothing'] = self.eta_smoothing - old_smooth
-
-        # CAS 2 : OSCILLATIONS TROP FAIBLES (< tolérance/2)
-        # → Système trop mou, augmenter légèrement la réactivité
-        elif oscillation_ratio < 0.5:
-            # Augmentation modérée (5%)
-            increase_factor = 1.05
-
-            # Ajuste ETA
-            old_alpha = self.eta_alpha
-            self.eta_alpha *= increase_factor
-            self.eta_alpha = max(0.1, min(1.0, self.eta_alpha))
-            adjustments['eta_alpha'] = self.eta_alpha - old_alpha
-
-            # Ajuste KAPPA
-            old_beta = self.kappa_beta
-            self.kappa_beta *= increase_factor
-            self.kappa_beta = max(0.1, min(1.0, self.kappa_beta))
-            adjustments['kappa_beta'] = self.kappa_beta - old_beta
-
-            # Réduit légèrement le smoothing (moins d'inertie)
-            old_smooth = self.eta_smoothing
-            self.eta_smoothing = max(0.05, self.eta_smoothing * 0.95)
-            adjustments['eta_smoothing'] = self.eta_smoothing - old_smooth
-
-        # CAS 3 : OSCILLATIONS OPTIMALES
-        # → Aucun ajustement nécessaire
-        else:
-            adjustments['status'] = 'optimal'
-
-        # Enregistre les diagnostics
-        adjustments['theta_std'] = theta_std
-        adjustments['oscillation_ratio'] = oscillation_ratio
-        adjustments['theta_mean'] = theta_mean
-
-        return adjustments
-
-    def update_sensors(self, current_theta: float, total_U: float, V_on: float) -> None:
-        """
-        Met à jour tous les capteurs de régulation
-
-        ALIGNEMENT THÉORIQUE (Document IRIS) :
-        Les capteurs utilisent V_on (valeur vivante en circulation) pour
-        refléter la dynamique économique réelle.
-
-        Args:
-            current_theta: Thermomètre actuel θ = D / V_on
-            total_U: Total monnaie d'usage en circulation
-            V_on: Valeur vivante en circulation (excluant immobilisations)
-        """
-        self.calculate_r_ic(current_theta)
-        self.calculate_nu_eff(total_U, V_on)
-        self.calculate_tau_eng()
-
+# ═══════════════════════════════════════════════════════════════════════════════
+# CLASSES PARTAGÉES : Agent, Asset, AssetType, DebtComponent, RADState
+# ═══════════════════════════════════════════════════════════════════════════════
+# Ces classes sont importées depuis iris_types.py et iris_rad.py pour éviter
+# les duplications et les imports circulaires.
+# - Agent, Asset, AssetType, DebtComponent : définis dans iris_types.py
+# - RADState : défini dans iris_rad.py
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CLASSE PRINCIPALE : IRISEconomy
+# ═══════════════════════════════════════════════════════════════════════════════
 
 class IRISEconomy:
     """
@@ -810,6 +236,9 @@ class IRISEconomy:
                  mode_population: str = "object",
                  taux_creation_entreprises: float = 0.05,
                  taux_faillite_entreprises: float = 0.03,
+                 conservation_rate: float = 0.0,  # ρ : taux de conservation RU (0 ≤ ρ ≤ 0.3)
+                 w_S: float = 0.5,  # Poids du Stipulat dans la combustion
+                 w_U: float = 0.5,  # Poids de U dans la combustion
                  seed: Optional[int] = None):
         """
         Initialise l'économie IRIS (version 2.1 unifiée)
@@ -836,6 +265,9 @@ class IRISEconomy:
             mode_population: "object" (détaillé, NFT) ou "vectorized" (rapide, gros volumes)
             taux_creation_entreprises: Taux de création d'entreprises (si enable_dynamic_business)
             taux_faillite_entreprises: Taux de faillite de base (si enable_dynamic_business)
+            conservation_rate: ρ - taux de conservation du RU (0 ≤ ρ ≤ 0.3, défaut 0.0)
+            w_S: Poids du Stipulat (S) dans la combustion S+U→V (défaut 0.5)
+            w_U: Poids de U dans la combustion S+U→V (défaut 0.5, w_S + w_U = 1)
             seed: Graine aléatoire pour reproductibilité (None = aléatoire)
         """
         # Graine aléatoire si fournie
@@ -860,6 +292,11 @@ class IRISEconomy:
         self.rad = RADState()
         self.gold_factor = gold_factor
         self.universal_income_rate = universal_income_rate
+
+        # Paramètres de régulation (THÉORIE §3.2.2 et §2.2.3)
+        self.conservation_rate = max(0.0, min(0.3, conservation_rate))  # ρ borné à [0, 0.3]
+        self.w_S = w_S  # Poids Stipulat dans combustion
+        self.w_U = w_U  # Poids U dans combustion
 
         # DEPRECATED: time_scale est maintenant toujours "months" (1 step = 1 mois)
         if time_scale is not None and time_scale != "months":
@@ -1621,24 +1058,26 @@ class IRISEconomy:
         V_on = self.get_V_on()
 
         # ═══════════════════════════════════════════════════════════════════════════
-        # κ MODULE ICI LA LIQUIDITÉ (MONTANT DE RU DISTRIBUÉ)
+        # FORMULE DU REVENU UNIVERSEL (THÉORIE §3.2.2)
         # ═══════════════════════════════════════════════════════════════════════════
         # ÉTAPE 2 : Calcule le revenu universel théorique par agent
-        # Formule IRIS avec modulation κ : RU = κ × (V_on × τ) / N_agents
+        #
+        # FORMULE THÉORIQUE §3.2.2 :
+        # U_t = (1 - ρ_t) × V_{t-1}^{on} / (T × N_t)
+        #
         # Où :
-        # • V_on : Valeur vivante en circulation
-        # • τ : Taux de RU (universal_income_rate = 1% par défaut, annuel)
-        # • κ : COEFFICIENT DE LIQUIDITÉ (ajusté par le RAD selon θ)
-        # • N_agents : Nombre d'agents
+        # • ρ_t : taux de conservation (0 ≤ ρ ≤ 0.3), défaut 0.0
+        # • V_{t-1}^{on} : valeur vivante du cycle PRÉCÉDENT
+        # • T = STEPS_PER_YEAR = 12 : cycles par an (1 step = 1 mois)
+        # • N_t : nombre d'utilisateurs actifs
         #
-        # RÔLE DE κ DANS LE RU (CONTRACYCLIQUE) :
-        # • κ = 1.0 en équilibre (θ = 1) → RU nominal
-        # • κ < 1.0 si θ > 1 (surchauffe) → RU réduit, FREINE l'injection de liquidité
-        # • κ > 1.0 si θ < 1 (sous-régime) → RU augmenté, STIMULE l'injection de liquidité
-        #
-        # C'est le MÉCANISME CONTRACYCLIQUE : κ régule l'injection de liquidité via le RU
-        # pour maintenir θ proche de 1 (équilibre thermodynamique)
-        income_theoretical = self.rad.kappa * V_on * self.universal_income_rate / len(self.agents)
+        # NOTE: Pour cette version, on utilise V_on actuel comme approximation de V_{t-1}^{on}
+        # Une version future pourrait stocker V_on_previous dans RADState
+        N_agents = len(self.agents)
+        rho = getattr(self, 'conservation_rate', 0.0)  # Taux de conservation (défaut 0.0)
+        T = STEPS_PER_YEAR  # = 12 (1 step = 1 mois)
+
+        income_theoretical = (1 - rho) * V_on / (T * N_agents)
 
         # ÉTAPE 3 : CONTRAINTE DE VARIATION α_RU
         # |RU_t - RU_{t-1}| ≤ α_RU × RU_{t-1}
@@ -1709,15 +1148,8 @@ class IRISEconomy:
         Returns:
             Tuple (C2_activated, C3_activated) pour traçabilité
         """
-        # RÉDUCTION CYCLIQUE DE D : 0.1041666% par cycle (borne anti-divergence)
-        # Appliqué à toutes les composantes de la dette thermométrique
-        # Facteur de réduction : 1 - 0.001041666 = 0.998958334
-        D_REDUCTION_FACTOR = 0.998958334
-        self.rad.D_materielle *= D_REDUCTION_FACTOR
-        self.rad.D_services *= D_REDUCTION_FACTOR
-        self.rad.D_contractuelle *= D_REDUCTION_FACTOR
-        self.rad.D_engagement *= D_REDUCTION_FACTOR
-        self.rad.D_regulatrice *= D_REDUCTION_FACTOR
+        # NOTE: L'amortissement de D est maintenant appliqué UNE SEULE FOIS dans step()
+        # (après regulate()) pour éviter la double application. Voir étape 5b de step().
 
         # MESURE DES INDICATEURS
         theta = self.thermometer()
@@ -2329,7 +1761,18 @@ class IRISEconomy:
                 "drift_coeff": 0.02
             })
 
-        # 7. SNAPSHOT de l'état (ÉTAPE 7 - Pipeline propre)
+        # 7. EXTINCTION PÉRIODIQUE DE U (THÉORIE §2.2.2)
+        # "Les unités U non dépensées à la fin du cycle t sont automatiquement détruites."
+        # Dans notre simulation: 1 cycle = 1 an = 12 steps
+        # Extinction tous les 12 steps (fin d'année)
+        if self.time % STEPS_PER_YEAR == 0:
+            for agent in self.agents.values():
+                # Détruit les U non dépensés (extinction complète selon la théorie)
+                # Note: Dans une version plus douce, on pourrait garder un petit % (5-10%)
+                # pour transition, mais la théorie demande extinction totale.
+                agent.U_balance = 0.0
+
+        # 8. SNAPSHOT de l'état (ÉTAPE 8 - Pipeline propre)
         # Capture l'état au temps self.time (après toutes les mises à jour du cycle)
         # Note : self.time a déjà été incrémenté au début de step()
         self._snapshot_state()

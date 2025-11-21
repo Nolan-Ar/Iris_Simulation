@@ -18,7 +18,7 @@ Mécanismes démographiques :
 
 import numpy as np
 from typing import Dict, List
-from .iris_model import Agent, Asset, AssetType
+from .iris_types import Agent, Asset, AssetType
 
 
 class Demographics:
