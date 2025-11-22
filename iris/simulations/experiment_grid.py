@@ -374,6 +374,16 @@ def run_all_grid(output_dir: Path = Path("results/grid")) -> pd.DataFrame:
     print(f"Résumé global: {summary_path}")
     print(f"{'='*80}\n")
 
+    # Génération automatique des graphiques d'analyse
+    print("📊 Génération des graphiques d'analyse...")
+    try:
+        from iris.simulations.plot_analysis import IRISPlotAnalysis
+        analyzer = IRISPlotAnalysis(output_dir)
+        analyzer.plot_all()
+    except Exception as e:
+        print(f"⚠ Erreur lors de la génération des graphiques: {e}")
+        print("   (Les résultats CSV sont disponibles)")
+
     return df_summary
 
 
