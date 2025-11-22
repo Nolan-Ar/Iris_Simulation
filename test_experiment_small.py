@@ -91,6 +91,18 @@ def run_small_test():
     print(df_summary[['scenario_name', 'theta_mean', 'theta_std', 'gini_final',
                       'population_final', 'catastrophes_total']].to_string(index=False))
 
+    # Génération des graphiques d'analyse
+    print("\n" + "="*80)
+    print("📊 GÉNÉRATION DES GRAPHIQUES D'ANALYSE")
+    print("="*80)
+    try:
+        from iris.simulations.plot_analysis import IRISPlotAnalysis
+        analyzer = IRISPlotAnalysis(output_dir)
+        analyzer.plot_all()
+        print(f"\n✅ Graphiques disponibles dans: {output_dir / 'plots'}")
+    except Exception as e:
+        print(f"⚠ Erreur lors de la génération des graphiques: {e}")
+
     return df_summary
 
 
