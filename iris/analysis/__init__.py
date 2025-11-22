@@ -1,11 +1,8 @@
 """
-IRIS Analysis - Outils d'analyse et visualisation
-==================================================
+IRIS Analysis Package
+=====================
 
-Outils pour analyser et visualiser les résultats des simulations IRIS.
-
-Modules:
-- iris_visualizer: Visualisation des résultats de simulation
+Outils d'analyse et de visualisation pour les simulations IRIS.
 """
 
-__all__ = []
+__all__ = ['iris_visualizer']
